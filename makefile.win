@@ -1,0 +1,11 @@
+#--------------------------------------
+# makefile.win32
+# Windows-specific build configurations
+# (supports 32-bit and 64-bit)
+#--------------------------------------
+
+CXXFLAGS += $(FLAGS)
+LDFLAGS += -shared
+
+CXX ?= x86_64-w64-mingw32-g++
+LD = $(CXX)
