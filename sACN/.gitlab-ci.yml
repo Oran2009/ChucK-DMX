@@ -1,0 +1,164 @@
+workflow:
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+variables:
+  GIT_STRATEGY: clone
+  GIT_SUBMODULE_STRATEGY: normal
+  GLOBAL_CMAKE_OPTIONS: -DSACN_BUILD_TESTS=ON -DSACN_BUILD_EXAMPLES=ON -DSACN_WARN_AS_ERROR=ON
+  KLOCWORK_PROJECT: "sACN"
+
+include:
+  # Versioned build automation
+  - project: "etc/common-tech/tools/gitlab-ci-util"
+    ref: v2.3.1
+    file: "/ci-yml/deploy-versioned-build.yml"
+  # Klocwork static analysis
+  - project: "etc/common-tech/tools/gitlab-ci-util"
+    ref: v2.3.1
+    file: "/ci-yml/linux-klocwork.yml"
+
+windows-build:
+  stage: build
+  tags:
+    - ct-windows
+  variables:
+    SANITIZER_DEFS: -DSACN_ENABLE_E2E_TESTS=ON -DSACN_ENABLE_ASAN=ON
+  script:
+    - mkdir build
+    - cd build
+    - cmake -G "Visual Studio 16 2019" -A x64 $env:GLOBAL_CMAKE_OPTIONS.Split(" ") $env:SANITIZER_DEFS.Split(" ") ..
+    - cmake --build . --config Release -j
+    - ctest -C Release --output-on-failure
+  artifacts:
+    when: always
+    reports:
+      junit: build/tests/test-results/*.xml
+
+macos-build:
+  stage: build
+  tags:
+    - ct-mac-m2
+  parallel:
+    matrix:
+      - SANITIZER_DEFS:
+          - -DSACN_ENABLE_ASAN=ON -DSACN_ENABLE_UBSAN=ON
+          - -DSACN_ENABLE_TSAN=ON
+  script:
+    - mkdir build
+    - cd build
+    - cmake ${GLOBAL_CMAKE_OPTIONS} ${SANITIZER_DEFS} ..
+    - cmake --build .
+    - ctest --output-on-failure
+  artifacts:
+    when: always
+    reports:
+      junit: build/tests/test-results/*.xml
+
+linux-gcc-build:
+  stage: build
+  tags:
+    - etc-linux-docker
+  image: etc-docker.artifactory.etcconnect.com/etc/common-tech/gcc-cmake:llvm18
+  parallel:
+    matrix:
+      - SANITIZER_DEFS:
+          - -DSACN_ENABLE_E2E_TESTS=ON -DSACN_ENABLE_ASAN=ON -DSACN_ENABLE_UBSAN=ON
+          - -DSACN_ENABLE_E2E_TESTS=ON -DSACN_ENABLE_TSAN=ON
+  script:
+    - mkdir build
+    - cd build
+    - cmake ${GLOBAL_CMAKE_OPTIONS} ${SANITIZER_DEFS} ..
+    - make -j `nproc`
+    - ctest --output-on-failure
+  artifacts:
+    when: always
+    reports:
+      junit: build/tests/test-results/*.xml
+
+linux-clang-build:
+  stage: build
+  tags:
+    - etc-linux-docker
+  image: etc-docker.artifactory.etcconnect.com/etc/common-tech/clang-cmake-msan:latest
+  parallel:
+    matrix:
+      - SANITIZER_DEFS:
+          - -DSACN_ENABLE_E2E_TESTS=ON -DSACN_ENABLE_MSAN=ON
+  script:
+    - mkdir build
+    - cd build
+    - cmake ${GLOBAL_CMAKE_OPTIONS} ${SANITIZER_DEFS} ..
+    - make -j `nproc`
+    - ctest --output-on-failure
+  artifacts:
+    when: always
+    reports:
+      junit: build/tests/test-results/*.xml
+
+oss-build:
+  stage: build
+  tags:
+    - etc-linux-docker
+  image: etc-docker.artifactory.etcconnect.com/etc/common-tech/gcc-cmake:llvm18
+  script:
+    # Remove the .git folder to simulate building from P4/zip archive
+    - rm -rf .git/
+    - mkdir build
+    - cd build
+    # Use default config, no options
+    - cmake ..
+    - make -j `nproc`
+
+# Job to lint the code using clang-tidy and clang-format.
+lint:
+  stage: build
+  tags:
+    - etc-linux-docker
+  variables:
+    CMAKE_OPTIONS: -DSACN_ENABLE_CLANG_TIDY=ON -DSACN_CLANG_TIDY_WERROR=ON
+  image: etc-docker.artifactory.etcconnect.com/etc/common-tech/gcc-cmake:llvm18
+  script:
+    - mkdir build
+    - cd build
+    - cmake ${GLOBAL_CMAKE_OPTIONS} ${CMAKE_OPTIONS} ..
+    - make check_formatting
+    - make -j `nproc`
+
+docs:
+  stage: build
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  tags:
+    - etc-linux-docker
+  image: etc-docker.artifactory.etcconnect.com/etc/common-tech/doxygen:1.11.0
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - git fetch --tags
+    - etcdevtool docs . 1.11.0
+    - mkdir docs-build
+    - mv docs/build/* docs-build/
+  artifacts:
+    paths:
+      - docs-build
+
+deploy-docs:
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "main"'
+  tags:
+    - etc-linux-docker
+  image: etc-docker.artifactory.etcconnect.com/etc/common-tech/doxygen:1.11.0
+  variables:
+    GIT_DEPTH: 0
+    GH_REPO_NAME: sACNDocs
+    GH_REPO_REF: github.com/ETCLabs/sACNDocs.git
+    GH_REPO_TOKEN: $SVC_ETCLABS_REPO_TOKEN
+  script:
+    - pip install --upgrade etcdevtool
+    - chmod +x tools/ci/publish_docs.sh
+    - tools/ci/publish_docs.sh

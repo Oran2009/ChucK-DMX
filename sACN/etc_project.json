@@ -1,0 +1,78 @@
+{
+  "dependencies": [
+    {
+      "name": "EtcPal",
+      "gitlabPath": "etc/common-tech/general/etcpal",
+      "version": "1.0.0.17"
+    },
+    {
+      "name": "GSL",
+      "gitlabPath": "mirrors/thirdparty/microsoft/gsl",
+      "gitTag": "c31a9ad5e8e99da8567237a7ba51a7d8f419e5bf",
+      "devOnly": true
+    },
+    {
+      "name": "googletest",
+      "gitlabPath": "mirrors/thirdparty/google/googletest",
+      "gitTag": "6b74da4757a549563d7c37c8fae3e704662a043b",
+      "devOnly": true
+    }
+  ],
+  "devToolConfig": {
+    "version": {
+      "fileTemplates": {
+        "tools/templates/version.h.in": "include/sacn/version.h"
+      },
+      "jira": {
+        "project": "SACN"
+      }
+    },
+    "docs": {
+      "input": {
+        "unprocessed": [
+          "include/sacn",
+          "include/sacn/cpp",
+          "src/sacn",
+          "include/sacn/opts.h"
+        ],
+        "processed": [
+          "docs/pages"
+        ]
+      },
+      "tags": [
+        {
+          "name": "EtcPal",
+          "site": "https://etclabs.github.io/EtcPalDocs"
+        }
+      ],
+      "multiVersion": {
+        "enabled": true,
+        "htmlRoot": "/sACNDocs",
+        "versions": [
+          {
+            "name": "2.0.1",
+            "ref": "v2.0.1"
+          },
+          {
+            "name": "2.0.2",
+            "ref": "v2.0.2"
+          },
+          {
+            "name": "3.0.0",
+            "ref": "v3.0.0"
+          }
+        ]
+      }
+    },
+    "release-lib": {
+      "projectName": "sACN",
+      "jira": {
+        "project": "SACN"
+      },
+      "legacyP4Mirror": {
+        "name": "GITHUB_sACN",
+        "labelPrefix": "sACN"
+      }
+    }
+  }
+}
