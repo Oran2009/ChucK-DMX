@@ -6,7 +6,7 @@
 //    (the bulid process should yield a DMX.chug file)
 //
 // 2) you can manullay load the chugin when you run this program
-//    `chuck --chugin:DMX.chug DMX-test.ck`
+//    `chuck --chugin:x64/Debug/DMX.chug DMX-test.ck`
 //
 // 3) OR you can put the chugin into your chugins search path
 //    NOTE: not recommended until you feel the chugin to be
@@ -19,8 +19,10 @@
 //--------------------------------------------------------------------
 
 DMX dmx;
-dmx.protocol(2);    // sACN
-dmx.universe(1);
+dmx.protocol(1);
+// dmx.universe(1);
+dmx.port("COM5");
+dmx.rate(44);
 
 1 => int baseAddr;
 
@@ -68,8 +70,10 @@ fun void rampColorsAndTone() {
             // Set DMX with scaled dimmer
             for (int i; i < 5; i++) {
                 dmx.channel(baseAddr + i, (currColor[i] * dim) $ int);
+                dmx.channel(baseAddr + 5 + i, (currColor[(i + 1) % currColor.size()] * dim) $ int);
+                dmx.channel(baseAddr + 10 + i, (currColor[(i + 2) % currColor.size()] * dim) $ int);
             }
-            dmx.send();
+            spork ~ dmx.send();
 
             // Smooth sine frequency sweep synced to ramp dim
             220.0 + dim * 880.0 => float freq;
@@ -87,8 +91,10 @@ fun void rampColorsAndTone() {
 
             for (int i; i < 5; i++) {
                 dmx.channel(baseAddr + i, currColor[i]);
+                dmx.channel(baseAddr + 5 + i, currColor[(i + 1) % currColor.size()]);
+                dmx.channel(baseAddr + 10 + i, currColor[(i + 2) % currColor.size()]);
             }
-            dmx.send();
+            spork ~ dmx.send();
 
             // Sharp staccato tone: short burst at higher freq
             880 + 660 * (idx % 2) => float freq;
@@ -126,5 +132,5 @@ spork ~ play();
 
 // Keep the VM alive
 while (true) {
-    100::ms => now;
+    25::ms => now;
 }

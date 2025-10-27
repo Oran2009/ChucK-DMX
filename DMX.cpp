@@ -1,4 +1,4 @@
-// DMX.chug.cpp - DMX ChuGin
+﻿// DMX.chug.cpp - DMX ChuGin
 
 #include "chugin.h"
 #include "serial/serial.h" // serial
@@ -23,15 +23,21 @@ extern "C" {
 CK_DLL_CTOR(dmx_ctor);
 CK_DLL_DTOR(dmx_dtor);
 
+CK_DLL_MFUN(dmx_get_protocol);
 CK_DLL_MFUN(dmx_protocol);
+CK_DLL_MFUN(dmx_get_channel);
 CK_DLL_MFUN(dmx_channel);
+CK_DLL_MFUN(dmx_get_rate);
+CK_DLL_MFUN(dmx_rate);
 
 CK_DLL_MFUN(dmx_send);
 
 // serial
+CK_DLL_MFUN(dmx_get_port);
 CK_DLL_MFUN(dmx_port);
 
 // sACN and ArtNet
+CK_DLL_MFUN(dmx_get_universe);
 CK_DLL_MFUN(dmx_universe);
 
 // internal data offset for C++ class pointer storage
@@ -39,25 +45,24 @@ t_CKINT dmx_data_offset = 0;
 
 class DMX {
 public:
-    enum class Protocol {
-        Serial_Raw,
-        Serial,
-        sACN,
-        ArtNet
-    };
+    enum class Protocol { Serial_Raw, Serial, sACN, ArtNet };
 
-    DMX(t_CKFLOAT fs)
-        : _protocol(Protocol::Serial), _universe(1) {
+    DMX(t_CKFLOAT fs) {
         std::lock_guard<std::mutex> lock(dmx_mutex);
         memset(dmx_data, 0, sizeof(dmx_data));
         dmx_data[0] = 0; // DMX start code
     }
 
     ~DMX() {
-        deinit_sACN();
         deinit_Serial();
+        deinit_sACN();
+        deinit_ArtNet();
     }
 
+    Protocol protocol() {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        return _protocol;
+    }
     void protocol(Protocol protocol) {
         std::lock_guard<std::mutex> lock(state_mutex);
         _protocol = protocol;
@@ -65,10 +70,12 @@ public:
         case Protocol::Serial_Raw:
             deinit_sACN();
             deinit_ArtNet();
+            init_Serial();
             break;
         case Protocol::Serial:
             deinit_sACN();
             deinit_ArtNet();
+            init_Serial();
             break;
         case Protocol::sACN:
             deinit_Serial();
@@ -88,6 +95,19 @@ public:
             return;
         std::lock_guard<std::mutex> lock(dmx_mutex);
         dmx_data[channel] = value;
+    }
+
+    int rate() {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        if (update_interval_ms <= 0.0) return 0;
+        return static_cast<int>(std::round(1000.0 / update_interval_ms));
+    }
+    void rate(int hz) {
+        if (hz < 1 || hz > 44) {
+            throw std::invalid_argument("Update rate must be between 1 and 44 Hz");
+        }
+        std::lock_guard<std::mutex> lock(state_mutex);
+        update_interval_ms = 1000.0 / hz;
     }
 
     void send() {
@@ -118,6 +138,10 @@ public:
         }
     }
 
+    std::string port() {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        return serial_port;
+    }
     void port(const std::string& name) {
         std::lock_guard<std::mutex> lock(state_mutex);
         if (_protocol != Protocol::Serial_Raw && _protocol != Protocol::Serial) {
@@ -127,6 +151,10 @@ public:
         init_Serial();
     }
 
+    int universe() {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        return _universe;
+    }
     void universe(int universe) {
         std::lock_guard<std::mutex> lock(state_mutex);
 
@@ -159,12 +187,15 @@ public:
     }
 
 private:
-    Protocol _protocol;
-    int _universe;
+    Protocol _protocol{ Protocol::Serial };
+    int _universe{ 1 };
     unsigned char dmx_data[513];
 
     std::mutex dmx_mutex;     // protects dmx_data
     std::mutex state_mutex;   // protects protocol and universe
+
+    double update_interval_ms{ 1000.0 / 44.0 }; // default to 44 Hz
+    std::chrono::steady_clock::time_point last_send_time = std::chrono::steady_clock::now();
 
     // Serial
     serial::Serial serial;
@@ -268,7 +299,8 @@ private:
         artnet_initialized = false;
     }
 
-    void send_Serial(const unsigned char* snapshot) {
+    void send_Serial(const unsigned char* snapshot)
+    {
         std::lock_guard<std::mutex> lock(serial_mutex);
 
         if (!serial.isOpen()) {
@@ -282,39 +314,56 @@ private:
         }
 
         try {
-            serial.setBreak(true);
-            usleep(120);
-            serial.setBreak(false);
-            usleep(12);
-
-            if (_protocol == Protocol::Serial) {
-                unsigned char buf[518];
-                buf[0] = 0x7E;     // Start of message
-                buf[1] = 0x06;     // Send DMX packet command
-                buf[2] = 0x01;     // Data length LSB (513)
-                buf[3] = 0x02;     // Data length MSB (513 >> 8)
-                memcpy(&buf[4], snapshot, 513);
-                buf[517] = 0xE7;   // End of message
-
-                serial.write(buf, 518);
+            auto ms = static_cast<int>(std::round(update_interval_ms));
+            auto now = std::chrono::steady_clock::now();
+            {
+                std::lock_guard<std::mutex> state_lock(state_mutex);
+                if (now - last_send_time < std::chrono::milliseconds(ms))
+                    return;
+                last_send_time = now;
             }
-            else {
-                serial.write(snapshot, 513);
+
+            // --- Break condition only for "raw" FTDI/RS485 interfaces (OpenDMX style) ---
+            if (_protocol == Protocol::Serial_Raw) {
+                serial.setBreak(true);
+                usleep(120);      // 88+ μs break low
+                serial.setBreak(false);
+                usleep(12);       // 8+ μs Mark After Break high
+                serial.write(snapshot, 513); // 1 start + 512 DMX channels
+                return;
+            }
+
+            // --- For buffered interfaces (e.g., Enttec DMX USB Pro, DMXking, DSD Tech): ---
+            if (_protocol == Protocol::Serial) {
+                const uint16_t payloadLen = 513;     // Start code + 512 DMX slots
+                unsigned char buf[518];
+                buf[0] = 0x7E;                       // Start of message
+                buf[1] = 0x06;                       // SEND_DMX_PACKET command
+                buf[2] = payloadLen & 0xFF;          // Data length LSB
+                buf[3] = (payloadLen >> 8) & 0xFF;   // Data length MSB
+                memcpy(&buf[4], snapshot, payloadLen);
+                buf[4 + payloadLen] = 0xE7;          // End of message
+                serial.write(buf, 5 + payloadLen);   // 0x7E .. data .. 0xE7
+                return;
             }
         }
         catch (const std::exception& e) {
             std::cerr << "DMX Error: Serial write error: " << e.what() << std::endl;
-            try {
-                if (serial.isOpen())
-                    serial.close();
-            }
-            catch (...) {
-                // ignore
-            }
+            try { if (serial.isOpen()) serial.close(); }
+            catch (...) { /* ignore */ }
         }
     }
 
     void send_sACN(const unsigned char* snapshot) {
+        auto ms = static_cast<int>(std::round(update_interval_ms));
+        auto now = std::chrono::steady_clock::now();
+        {
+            std::lock_guard<std::mutex> state_lock(state_mutex);
+            if (now - last_send_time < std::chrono::milliseconds(ms))
+                return;
+            last_send_time = now;
+        }
+
         try {
             source.UpdateLevels(static_cast<uint16_t>(_universe), snapshot + 1, 512);
         }
@@ -332,6 +381,15 @@ private:
     }
 
     void send_ArtNet(const unsigned char* snapshot) {
+        auto ms = static_cast<int>(std::round(update_interval_ms));
+        auto now = std::chrono::steady_clock::now();
+        {
+            std::lock_guard<std::mutex> state_lock(state_mutex);
+            if (now - last_send_time < std::chrono::milliseconds(ms))
+                return;
+            last_send_time = now;
+        }
+
         if (!artnet_initialized) {
             throw std::runtime_error("ArtNet protocol not initialized");
         }
@@ -364,6 +422,11 @@ CK_DLL_DTOR(dmx_dtor) {
     OBJ_MEMBER_INT(SELF, dmx_data_offset) = 0;
 }
 
+CK_DLL_MFUN(dmx_get_protocol) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) { RETURN->v_int = -1; return; }
+    RETURN->v_int = static_cast<int>(dmx_obj->protocol());
+}
 CK_DLL_MFUN(dmx_protocol) {
     DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
     if (!dmx_obj) return;
@@ -392,6 +455,25 @@ CK_DLL_MFUN(dmx_channel) {
     dmx_obj->channel(channel, (unsigned char)value);
 }
 
+CK_DLL_MFUN(dmx_get_rate) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) { RETURN->v_int = -1; return; }
+    RETURN->v_int = dmx_obj->rate();
+}
+CK_DLL_MFUN(dmx_rate) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) return;
+
+    int hz = GET_NEXT_INT(ARGS);
+    try {
+        dmx_obj->rate(hz);
+    }
+    catch (const std::exception& e) {
+        std::cerr << "DMX Error in rate(): " << e.what() << std::endl;
+        throw e;
+    }
+}
+
 CK_DLL_MFUN(dmx_send) {
     DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
     if (!dmx_obj) return;
@@ -407,6 +489,12 @@ CK_DLL_MFUN(dmx_send) {
 
 // Serial
 
+CK_DLL_MFUN(dmx_get_port) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) { RETURN->v_string = API->object->create_string(VM, "", 0); return; }
+    const std::string& port = dmx_obj->port();
+    RETURN->v_string = API->object->create_string(VM, port.c_str(), (t_CKUINT)port.length());
+}
 CK_DLL_MFUN(dmx_port) {
     DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
     if (!dmx_obj) return;
@@ -423,6 +511,11 @@ CK_DLL_MFUN(dmx_port) {
 
 // sACN
 
+CK_DLL_MFUN(dmx_get_universe) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) { RETURN->v_int = -1; return; }
+    RETURN->v_int = dmx_obj->universe();
+}
 CK_DLL_MFUN(dmx_universe) {
     DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
     if (!dmx_obj) return;
@@ -451,18 +544,25 @@ CK_DLL_QUERY(DMX) {
     QUERY->add_arg(QUERY, "int", "channel");
     QUERY->add_arg(QUERY, "int", "value");
 
+    QUERY->add_mfun(QUERY, dmx_get_rate, "int", "rate");
+    QUERY->add_mfun(QUERY, dmx_rate, "void", "rate");
+    QUERY->add_arg(QUERY, "int", "rate");
+
     QUERY->add_mfun(QUERY, dmx_send, "void", "send");
 
     // Serial
 
+    QUERY->add_mfun(QUERY, dmx_get_port, "string", "port");
     QUERY->add_mfun(QUERY, dmx_port, "void", "port");
     QUERY->add_arg(QUERY, "string", "port");
 
-    // sACN
+    // sACN and ArtNet
 
+    QUERY->add_mfun(QUERY, dmx_get_protocol, "int", "protocol");
     QUERY->add_mfun(QUERY, dmx_protocol, "void", "protocol");
     QUERY->add_arg(QUERY, "int", "protocol");
 
+    QUERY->add_mfun(QUERY, dmx_get_universe, "int", "universe");
     QUERY->add_mfun(QUERY, dmx_universe, "void", "universe");
     QUERY->add_arg(QUERY, "int", "universe");
 

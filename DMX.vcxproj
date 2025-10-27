@@ -64,7 +64,7 @@
     <LinkIncremental>true</LinkIncremental>
     <TargetExt>.chug</TargetExt>
     <IncludePath>C:\Users\banhq\Documents\Projects\DMX.chug\libartnet\include;chuck/include;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\Users\banhq\Documents\Projects\DMX.chug\libartnet\msvc\libartnet\x64\Release;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
@@ -117,7 +117,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\Users\banhq\Documents\Projects\DMX.chug\sACN\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\Users\banhq\Documents\Projects\DMX.chug\libartnet\msvc\libartnet\x64\Release;C:\Users\banhq\Documents\Projects\DMX.chug\sACN\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libartnet.lib;sacn.lib;etcpal.lib;Ws2_32.lib;Mswsock.lib;Ole32.lib;User32.lib;Advapi32.lib;Kernel32.lib;Rpcrt4.lib;Winmm.lib;Iphlpapi.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
