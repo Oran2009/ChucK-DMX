@@ -30,6 +30,7 @@ CK_DLL_MFUN(dmx_channel);
 CK_DLL_MFUN(dmx_get_rate);
 CK_DLL_MFUN(dmx_rate);
 
+CK_DLL_MFUN(dmx_init);
 CK_DLL_MFUN(dmx_send);
 
 // serial
@@ -66,28 +67,6 @@ public:
     void protocol(Protocol protocol) {
         std::lock_guard<std::mutex> lock(state_mutex);
         _protocol = protocol;
-        switch (_protocol) {
-        case Protocol::Serial_Raw:
-            deinit_sACN();
-            deinit_ArtNet();
-            init_Serial();
-            break;
-        case Protocol::Serial:
-            deinit_sACN();
-            deinit_ArtNet();
-            init_Serial();
-            break;
-        case Protocol::sACN:
-            deinit_Serial();
-            deinit_ArtNet();
-            init_sACN();
-            break;
-        case Protocol::ArtNet:
-            deinit_Serial();
-            deinit_sACN();
-            init_ArtNet();
-            break;
-        }
     }
 
     void channel(int channel, unsigned char value) {
@@ -108,6 +87,30 @@ public:
         }
         std::lock_guard<std::mutex> lock(state_mutex);
         update_interval_ms = 1000.0 / hz;
+    }
+
+    void init() {
+        std::lock_guard<std::mutex> lock(state_mutex);
+
+        deinit_Serial();
+        deinit_sACN();
+        deinit_ArtNet();
+
+        switch (_protocol) {
+        case Protocol::Serial_Raw:
+            init_Serial();
+            break;
+        case Protocol::Serial:
+            init_Serial();
+            break;
+        case Protocol::sACN:
+            init_sACN();
+            break;
+        case Protocol::ArtNet:
+            init_ArtNet();
+            break;
+        }
+        last_send_time = std::chrono::steady_clock::now() - std::chrono::milliseconds(static_cast<int>(update_interval_ms));
     }
 
     void send() {
@@ -144,11 +147,7 @@ public:
     }
     void port(const std::string& name) {
         std::lock_guard<std::mutex> lock(state_mutex);
-        if (_protocol != Protocol::Serial_Raw && _protocol != Protocol::Serial) {
-            throw std::runtime_error("You should only call port() when using Serial protocols.");
-        }
         serial_port = name;
-        init_Serial();
     }
 
     int universe() {
@@ -157,33 +156,7 @@ public:
     }
     void universe(int universe) {
         std::lock_guard<std::mutex> lock(state_mutex);
-
-        if (_protocol == Protocol::sACN) {
-            if (_universe != universe) {
-                source.RemoveUniverse(static_cast<uint16_t>(_universe));
-                _universe = universe;
-                sacn::Source::UniverseSettings universe_settings{ static_cast<uint16_t>(_universe) };
-                etcpal::Error error = source.AddUniverse(universe_settings);
-                if (!error.IsOk()) {
-                    throw std::runtime_error(error.ToString());
-                }
-            }
-        }
-        else if (_protocol == Protocol::ArtNet) {
-            if (!artnet_initialized) {
-                throw std::runtime_error("ArtNet protocol not initialized");
-            }
-            if (_universe != universe) {
-                _universe = universe;
-                uint8_t subnet = (universe >> 4) & 0x0F;
-                uint8_t uni = universe & 0x0F;
-                artnet_set_subnet_addr(artnet_node_obj, subnet);
-                artnet_set_port_addr(artnet_node_obj, 0, ARTNET_INPUT_PORT, uni);
-            }
-        }
-        else {
-            throw std::runtime_error("You should only call universe() when using sACN or ArtNet protocols");
-        }
+        _universe = universe;
     }
 
 private:
@@ -207,7 +180,6 @@ private:
 
     // ArtNet
     artnet_node artnet_node_obj = nullptr;
-    bool artnet_initialized = false;
 
     void openPort() {
         if (serial.isOpen())
@@ -235,6 +207,9 @@ private:
     }
 
     void init_Serial() {
+        if (serial_port.empty()) {
+            throw std::runtime_error("Serial port name not set. Call port() before init().");
+        }
         openPort();
     }
 
@@ -268,8 +243,6 @@ private:
     }
 
     void init_ArtNet() {
-        if (artnet_initialized) return;
-
         artnet_node_obj = artnet_new(nullptr, 0);
         if (!artnet_node_obj) {
             throw std::runtime_error("Failed to create libartnet node");
@@ -282,21 +255,22 @@ private:
 
         artnet_set_port_type(artnet_node_obj, 0, ARTNET_ENABLE_INPUT, ARTNET_PORT_DMX);
 
+        // Configure universe
+        uint8_t subnet = (_universe >> 4) & 0x0F;
+        uint8_t uni = _universe & 0x0F;
+        artnet_set_subnet_addr(artnet_node_obj, subnet);
+        artnet_set_port_addr(artnet_node_obj, 0, ARTNET_INPUT_PORT, uni);
+
         if (artnet_start(artnet_node_obj) < 0) {
             artnet_destroy(artnet_node_obj);
             artnet_node_obj = nullptr;
             throw std::runtime_error("Failed to start libartnet node");
         }
-
-        artnet_initialized = true;
     }
 
     void deinit_ArtNet() {
-        if (!artnet_initialized) return;
-
         artnet_destroy(artnet_node_obj);
         artnet_node_obj = nullptr;
-        artnet_initialized = false;
     }
 
     void send_Serial(const unsigned char* snapshot)
@@ -390,9 +364,6 @@ private:
             last_send_time = now;
         }
 
-        if (!artnet_initialized) {
-            throw std::runtime_error("ArtNet protocol not initialized");
-        }
         int res = artnet_send_dmx(artnet_node_obj, 0, 512, snapshot + 1);
         if (res < 0) {
             std::cerr << "DMX Warning: libartnet failed to send DMX, attempting reconnect..." << std::endl;
@@ -474,6 +445,19 @@ CK_DLL_MFUN(dmx_rate) {
     }
 }
 
+CK_DLL_MFUN(dmx_init) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) return;
+
+    try {
+        dmx_obj->init();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "DMX Error in init(): " << e.what() << std::endl;
+        throw e;
+    }
+}
+
 CK_DLL_MFUN(dmx_send) {
     DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
     if (!dmx_obj) return;
@@ -548,6 +532,7 @@ CK_DLL_QUERY(DMX) {
     QUERY->add_mfun(QUERY, dmx_rate, "void", "rate");
     QUERY->add_arg(QUERY, "int", "rate");
 
+    QUERY->add_mfun(QUERY, dmx_init, "void", "init");
     QUERY->add_mfun(QUERY, dmx_send, "void", "send");
 
     // Serial

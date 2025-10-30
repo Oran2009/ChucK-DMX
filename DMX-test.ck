@@ -19,10 +19,12 @@
 //--------------------------------------------------------------------
 
 DMX dmx;
-dmx.protocol(1);
-// dmx.universe(1);
-dmx.port("COM5");
+dmx.protocol(2);
+dmx.universe(1);
+// dmx.port("COM5");
 dmx.rate(44);
+
+dmx.init();
 
 1 => int baseAddr;
 
@@ -70,8 +72,8 @@ fun void rampColorsAndTone() {
             // Set DMX with scaled dimmer
             for (int i; i < 5; i++) {
                 dmx.channel(baseAddr + i, (currColor[i] * dim) $ int);
-                dmx.channel(baseAddr + 5 + i, (currColor[(i + 1) % currColor.size()] * dim) $ int);
-                dmx.channel(baseAddr + 10 + i, (currColor[(i + 2) % currColor.size()] * dim) $ int);
+                // dmx.channel(baseAddr + 5 + i, (currColor[(i + 1) % currColor.size()] * dim) $ int);
+                // dmx.channel(baseAddr + 10 + i, (currColor[(i + 2) % currColor.size()] * dim) $ int);
             }
             spork ~ dmx.send();
 
@@ -91,8 +93,8 @@ fun void rampColorsAndTone() {
 
             for (int i; i < 5; i++) {
                 dmx.channel(baseAddr + i, currColor[i]);
-                dmx.channel(baseAddr + 5 + i, currColor[(i + 1) % currColor.size()]);
-                dmx.channel(baseAddr + 10 + i, currColor[(i + 2) % currColor.size()]);
+                // dmx.channel(baseAddr + 5 + i, currColor[(i + 1) % currColor.size()]);
+                // dmx.channel(baseAddr + 10 + i, currColor[(i + 2) % currColor.size()]);
             }
             spork ~ dmx.send();
 
