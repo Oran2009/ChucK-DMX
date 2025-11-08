@@ -41,12 +41,15 @@ jobs:
 
     - name: Configure CMake
       run: |
-        cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -A x64 -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=${{ matrix.os == 'windows-latest' && 'windows' || 'linux' }} -DETCPAL_NET_TARGET=${{ matrix.os == 'windows-latest' && 'windows' || 'linux' }}
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -A x64 -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=windows -DETCPAL_NET_TARGET=windows
+        else
+          cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=linux -DETCPAL_NET_TARGET=linux
+        fi
       shell: bash
 
     - name: Build
-      run: |
-        cmake --build ${{ matrix.build_dir }} --config ${{ matrix.config }}
+      run: cmake --build ${{ matrix.build_dir }} --config ${{ matrix.config }}
       shell: bash
 
     - name: Upload DMX.chug artifact
