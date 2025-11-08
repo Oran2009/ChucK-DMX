@@ -6,7 +6,7 @@
 -----------------------------------------------------------------------------*/
 #include "chugin.h"
 #include "serial/serial.h" // serial
-#include "sACN/cpp/source.h" //sACN
+#include "sacn/cpp/source.h" //sACN
 
 #include <string>
 #include <iostream>
