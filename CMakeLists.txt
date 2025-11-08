@@ -28,7 +28,7 @@ endif()
 
 # Define your chugin library target
 add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
-set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".chug")
+set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "" SUFFIX ".chug")
 
 # Link libraries: static serial + libartnet + sACN (which includes etcpal) + platform libs
 target_link_libraries(${PROJECT_NAME}
