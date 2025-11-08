@@ -49,6 +49,8 @@ jobs:
       run: |
         if [ "${{ matrix.os }}" = "windows-latest" ]; then
           cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -A x64 -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=windows -DETCPAL_NET_TARGET=windows
+        elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+          cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=macos -DETCPAL_NET_TARGET=macos
         else
           cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=linux -DETCPAL_NET_TARGET=linux
         fi
