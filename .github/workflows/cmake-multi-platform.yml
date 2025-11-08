@@ -60,7 +60,7 @@ jobs:
         cmake --build ${{ steps.strings.outputs.build_output_dir }} --config ${{ matrix.build_type }}
 
     - name: Upload DMX.chug artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: DMX-chugin-${{ matrix.os }}
         path: |
