@@ -15,16 +15,9 @@ include_directories(
 )
 
 # Add sACN as a subdirectory (which includes EtcPal)
+add_subdirectory(serial)
+add_subdirectory(libartnet)
 add_subdirectory(sACN)
-
-# Set your external static library paths for serial and libartnet (adjust paths as needed)
-if(WIN32)
-    set(SERIAL_LIBRARY "${CMAKE_SOURCE_DIR}/serial/build/Release/serial.lib")
-    set(ARTNET_LIBRARY "${CMAKE_SOURCE_DIR}/libartnet/msvc/libartnet/x64/Release/libartnet.lib")
-else()
-    set(SERIAL_LIBRARY "${CMAKE_SOURCE_DIR}/serial/lib/libserial.a")
-    set(ARTNET_LIBRARY "${CMAKE_SOURCE_DIR}/libartnet/lib/libartnet.a")
-endif()
 
 # Platform system libraries
 if(WIN32)
@@ -41,6 +34,8 @@ set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".chug")
 target_link_libraries(${PROJECT_NAME}
     ${SERIAL_LIBRARY}
     ${ARTNET_LIBRARY}
-    sACN           # sACN added as subproject target
+    serial
+    libartnet
+    sACN
     ${PLATFORM_LIBS}
 )
