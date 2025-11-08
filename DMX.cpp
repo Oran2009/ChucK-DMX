@@ -1,5 +1,9 @@
-﻿// DMX.chug.cpp - DMX ChuGin
-
+﻿/*----------------------------------------------------------------------------
+* ChucK-DMX: A plugin for ChucK that enables the sending of DMX over serial or over ethernet via the ArtNet and sACN network protocols.
+* 
+* author: Ben Hoang (https://ccrma.stanford.edu/~hoangben/)
+* date: Fall 2025
+-----------------------------------------------------------------------------*/
 #include "chugin.h"
 #include "serial/serial.h" // serial
 #include "sACN/cpp/source.h" //sACN
@@ -514,12 +518,34 @@ CK_DLL_MFUN(dmx_universe) {
     }
 }
 
+CK_DLL_INFO(DMX)
+{
+    // the version string of this chugin, e.g., "v1.2.1"
+    QUERY->setinfo(QUERY, CHUGIN_INFO_CHUGIN_VERSION, "v0.1.0");
+    // the author(s) of this chugin, e.g., "Alice Baker & Carl Donut"
+    QUERY->setinfo(QUERY, CHUGIN_INFO_AUTHORS, "Ben Hoang");
+    // text description of this chugin; what is it? what does it do? who is it for?
+    QUERY->setinfo(QUERY, CHUGIN_INFO_DESCRIPTION, 
+        "ChucK-DMX: A plugin for ChucK that enables the sending of DMX "
+        "over serial or over ethernet via the ArtNet and sACN network protocols.");
+    // (optional) URL of the homepage for this chugin
+    QUERY->setinfo(QUERY, CHUGIN_INFO_URL, "https://ccrma.stanford.edu/~hoangben/ChucK-DMX/");
+    // (optional) contact email
+    QUERY->setinfo(QUERY, CHUGIN_INFO_EMAIL, "hoangben@ccrma.stanford.edu");
+}
+
 // ChucK Query function
 
 CK_DLL_QUERY(DMX) {
     QUERY->setname(QUERY, "DMX");
 
     QUERY->begin_class(QUERY, "DMX", "Object");
+    QUERY->doc_class(QUERY,
+        "The DMX class provides control over DMX512 lighting data and protocol selection for ChucK. "
+        "It supports sending DMX using Serial (including Enttec-style USB and OpenDMX), sACN (E1.31), "
+        "and Art-Net output, with runtime selection of protocol, port, universe, and refresh rate. "
+        "Configure protocol, port/universe, and rate, then call init() to instantiate the connection."
+    );
 
     QUERY->add_ctor(QUERY, dmx_ctor);
     QUERY->add_dtor(QUERY, dmx_dtor);
@@ -527,29 +553,77 @@ CK_DLL_QUERY(DMX) {
     QUERY->add_mfun(QUERY, dmx_channel, "void", "channel");
     QUERY->add_arg(QUERY, "int", "channel");
     QUERY->add_arg(QUERY, "int", "value");
+    QUERY->doc_func(QUERY,
+        "Set a DMX channel (1–512) to a value (0–255). Changes are staged in the transmission buffer and take effect upon next send()."
+    );
 
     QUERY->add_mfun(QUERY, dmx_get_rate, "int", "rate");
+    QUERY->doc_func(QUERY,
+        "Get the current DMX update rate in Hz (frames per second)."
+    );
+
     QUERY->add_mfun(QUERY, dmx_rate, "void", "rate");
     QUERY->add_arg(QUERY, "int", "rate");
+    QUERY->doc_func(QUERY,
+        "Set the DMX update rate (Hz). Acceptable range is 1–44 Hz. "
+        "This controls the minimum interval between consecutive sends."
+    );
 
     QUERY->add_mfun(QUERY, dmx_init, "void", "init");
+    QUERY->doc_func(QUERY,
+        "Initialize the DMX connection using the last-set protocol, port (for serial), and universe (for sACN/Art-Net). "
+        "Call this after adjusting configuration parameters to reconfigure the DMX device."
+    );
+
     QUERY->add_mfun(QUERY, dmx_send, "void", "send");
+    QUERY->doc_func(QUERY,
+        "Transmit the currently-set DMX buffer over the active protocol. Will enforce the minimum rate set by rate()."
+    );
 
     // Serial
 
     QUERY->add_mfun(QUERY, dmx_get_port, "string", "port");
+    QUERY->doc_func(QUERY,
+        "Get the currently configured serial port string (e.g., '/dev/ttyUSB0' or 'COM3'). "
+        "This should be used for Serial and Serial_Raw protocols only."
+    );
+
     QUERY->add_mfun(QUERY, dmx_port, "void", "port");
     QUERY->add_arg(QUERY, "string", "port");
+    QUERY->doc_func(QUERY,
+        "Set the serial port name used when protocol is Serial or Serial_Raw. "
+        "This should be used for Serial and Serial_Raw protocols only. "
+        "Configure this before init()."
+    );
 
     // sACN and ArtNet
 
     QUERY->add_mfun(QUERY, dmx_get_protocol, "int", "protocol");
+    QUERY->doc_func(QUERY,
+        "Get the current DMX protocol as an integer: 0=Serial_Raw, 1=Serial, 2=sACN, 3=ArtNet."
+    );
+
     QUERY->add_mfun(QUERY, dmx_protocol, "void", "protocol");
     QUERY->add_arg(QUERY, "int", "protocol");
+    QUERY->doc_func(QUERY,
+        "Set the DMX protocol to use. 0=Serial_Raw (break timing), 1=Serial (Enttec DMX USB Pro, etc), "
+        "2=sACN (E1.31 streaming ACN), 3=ArtNet. "
+        "Configure this before init()."
+    );
 
     QUERY->add_mfun(QUERY, dmx_get_universe, "int", "universe");
+    QUERY->doc_func(QUERY,
+        "Get the current DMX universe used for sACN or ArtNet output. "
+        "Irrelevant for Serial or Serial_Raw protocols."
+    );
+
     QUERY->add_mfun(QUERY, dmx_universe, "void", "universe");
     QUERY->add_arg(QUERY, "int", "universe");
+    QUERY->doc_func(QUERY,
+        "Set the DMX universe for sACN or ArtNet output. "
+        "This should be used for sACN and ArtNet protocols only. "
+        "Configure this before init()."
+    );
 
     dmx_data_offset = QUERY->add_mvar(QUERY, "int", "@dmx_data", false);
 

@@ -1,4 +1,4 @@
-<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -148,6 +148,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DMX.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="scripts\build-pkg.ck" />
+    <None Include="serial\cmake\serialConfig.cmake" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Targets" />
 </Project>
