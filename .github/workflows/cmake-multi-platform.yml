@@ -36,6 +36,12 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
+    - name: Install Dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y uuid-dev
+
     - name: Set up CMake
       uses: lukka/get-cmake@v4.1.2
 
