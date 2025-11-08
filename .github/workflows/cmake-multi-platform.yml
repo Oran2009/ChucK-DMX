@@ -1,0 +1,59 @@
+name: Build ChucK-DMX Cross-Platform
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            generator: "Unix Makefiles"
+            config: Release
+            build_dir: build
+            chug_path: build/DMX.chug
+          - os: windows-latest
+            generator: "Visual Studio 17 2022"
+            config: Release
+            build_dir: build
+            chug_path: build/Release/DMX.chug
+          - os: macos-latest
+            generator: "Unix Makefiles"
+            config: Release
+            build_dir: build
+            chug_path: build/DMX.chug
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up CMake
+      uses: lukka/get-cmake@v4.1.2
+
+    - name: Configure CMake
+      run: |
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -A x64 -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=windows -DETCPAL_NET_TARGET=windows
+        else
+          cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=linux -DETCPAL_NET_TARGET=linux
+        fi
+      shell: bash
+
+    - name: Build
+      run: cmake --build ${{ matrix.build_dir }} --config ${{ matrix.config }}
+      shell: bash
+
+    - name: Upload DMX.chug artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DMX-chugin-${{ matrix.os }}
+        path: ${{ matrix.chug_path }}
