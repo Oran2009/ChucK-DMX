@@ -50,6 +50,7 @@ If you prefer to build ChucK-DMX manually instead of installing via ChuMP, follo
 - A C++17 compatible compiler
 - On **Windows**: Visual Studio 2022 (or newer) with MSVC toolchain
 - On **Linux/macOS**: GCC or Clang toolchain
+- On **Linux**: uuid-dev package: `sudo apt-get install uuid-dev`
 
 ### Clone the repository
 
