@@ -31,7 +31,7 @@ If the ChucK-DMX ChuGin is properly loaded, the following example will run witho
 
 ```
 // example.ck
-@import "DMX"
+DMX dmx;
 ```
 
 Congrats, you now have ChucK-DMX properly installed!
