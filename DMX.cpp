@@ -551,6 +551,19 @@ CK_DLL_QUERY(DMX) {
     QUERY->add_ctor(QUERY, dmx_ctor);
     QUERY->add_dtor(QUERY, dmx_dtor);
 
+    QUERY->add_mfun(QUERY, dmx_get_protocol, "int", "protocol");
+    QUERY->doc_func(QUERY,
+        "Get the current DMX protocol as an integer: 0=Serial_Raw, 1=Serial, 2=sACN, 3=ArtNet."
+    );
+
+    QUERY->add_mfun(QUERY, dmx_protocol, "void", "protocol");
+    QUERY->add_arg(QUERY, "int", "protocol");
+    QUERY->doc_func(QUERY,
+        "Set the DMX protocol to use. 0=Serial_Raw (break timing), 1=Serial (Enttec DMX USB Pro, etc), "
+        "2=sACN (E1.31 streaming ACN), 3=ArtNet. "
+        "Configure this before init()."
+    );
+
     QUERY->add_mfun(QUERY, dmx_channel, "void", "channel");
     QUERY->add_arg(QUERY, "int", "channel");
     QUERY->add_arg(QUERY, "int", "value");
@@ -598,19 +611,6 @@ CK_DLL_QUERY(DMX) {
     );
 
     // sACN and ArtNet
-
-    QUERY->add_mfun(QUERY, dmx_get_protocol, "int", "protocol");
-    QUERY->doc_func(QUERY,
-        "Get the current DMX protocol as an integer: 0=Serial_Raw, 1=Serial, 2=sACN, 3=ArtNet."
-    );
-
-    QUERY->add_mfun(QUERY, dmx_protocol, "void", "protocol");
-    QUERY->add_arg(QUERY, "int", "protocol");
-    QUERY->doc_func(QUERY,
-        "Set the DMX protocol to use. 0=Serial_Raw (break timing), 1=Serial (Enttec DMX USB Pro, etc), "
-        "2=sACN (E1.31 streaming ACN), 3=ArtNet. "
-        "Configure this before init()."
-    );
 
     QUERY->add_mfun(QUERY, dmx_get_universe, "int", "universe");
     QUERY->doc_func(QUERY,
