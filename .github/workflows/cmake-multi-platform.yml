@@ -19,22 +19,27 @@ jobs:
             config: Release
             build_dir: build
             chug_path: build/DMX.chug
+            chumpinate_script: scripts/build-pkg-linux.ck
           - os: windows-latest
             generator: "Visual Studio 17 2022"
             config: Release
             build_dir: build
             chug_path: build/Release/DMX.chug
+            chumpinate_script: scripts/build-pkg-win.ck
           - os: macos-latest
             generator: "Unix Makefiles"
             config: Release
             build_dir: build
             chug_path: build/DMX.chug
+            chumpinate_script: scripts/build-pkg-mac.ck
 
     runs-on: ${{ matrix.os }}
 
+    outputs:
+      artifact-name: DMX-${{ matrix.os }}
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
     - name: Install Dependencies (Linux)
       if: runner.os == 'Linux'
@@ -63,5 +68,69 @@ jobs:
     - name: Upload DMX.chug artifact
       uses: actions/upload-artifact@v4
       with:
-        name: DMX-chugin-${{ matrix.os }}
+        name: DMX-${{ matrix.os }}
         path: ${{ matrix.chug_path }}
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Download Windows artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: DMX-windows-latest
+        path: artifacts/Windows
+
+    - name: Download Linux artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: DMX-ubuntu-latest
+        path: artifacts/Linux
+
+    - name: Download macOS artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: DMX-macos-latest
+        path: artifacts/macOS
+
+    - name: Prepare package and releases folders
+      run: |
+        mkdir -p package
+        mkdir -p releases
+
+    - name: Install ChucK on Linux
+      if: runner.os == 'Linux'
+      run: |
+        wget https://chuck.cs.princeton.edu/release/Linux/chuck-1.5.5.3.tgz
+        tar xf chuck-1.5.5.3.tgz
+        sudo cp chuck-1.5.5.3/bin/chuck /usr/local/bin/
+    
+    - name: Install ChucK on macOS
+      if: runner.os == 'macOS'
+      run: brew install chuck
+
+    - name: Install ChucK on Windows
+      if: runner.os == 'Windows'
+      run: choco install chuck
+
+    - name: Run Chumpinate Windows script
+      if: runner.os == 'Windows'
+      run: chuck scripts/build-pkg-win.ck
+
+    - name: Run Chumpinate Linux script
+      if: runner.os == 'Linux'
+      run: chuck scripts/build-pkg-linux.ck
+
+    - name: Run Chumpinate macOS script
+      if: runner.os == 'macOS'
+      run: chuck scripts/build-pkg-mac.ck
+
+    - name: Upload combined package artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DMX-Packages-All
+        path: |
+          package
+          releases
