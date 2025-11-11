@@ -107,13 +107,14 @@ jobs:
           mv artifacts/Linux/DMX.chug builds/linux/DMX.chug
           mv artifacts/macOS/DMX.chug builds/mac/DMX.chug
   
-      # Install ChucK via Homebrew on macOS
-      - name: Install ChucK
-        run: brew install chuck
-
-      - name: Install Chumpinate
-        run: chump install Chumpinate
-  
+      # Install ChucK and Chumpinate from official .pkg
+      - name: Install ChucK and Chumpinate from official macOS .pkg
+        run: |
+          curl -L -o chuck-1.5.5.5.pkg https://chuck.stanford.edu/release/files/exe/chuck-1.5.5.5.pkg
+          sudo installer -pkg chuck-1.5.5.5.pkg -target /
+          which chuck
+          which chump
+          
       # Run Chumpinate build-pkg scripts using the .chug files in package dir
       - name: Run Chumpinate Windows script
         run: chuck scripts/build-pkg-win.ck
