@@ -25,7 +25,7 @@ PackageVersion ver("DMX", version);
 "windows" => ver.os;
 "all" => ver.arch;
 
-ver.addFile(me.dir() + "../build/Release/DMX.chug");
+ver.addFile(me.dir() + "../builds/win/DMX.chug");
 
 // wrap up all our files into a zip file, and tell Chumpinate what URL
 // this zip file will be located at.
