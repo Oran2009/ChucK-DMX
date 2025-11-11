@@ -1,7 +1,9 @@
 @import "Chumpinate"
 
+"0.1.0" => string version;
+
 // instantiate a Chumpinate package
-Package pkg("ChuGUI");
+Package pkg("DMX");
 
 // add our metadata here
 ["Ben Hoang"] => pkg.authors;
@@ -14,19 +16,19 @@ Package pkg("ChuGUI");
 
 ["DMX", "lighting", "light bulbs", "ArtNet", "sACN", "Serial"] => pkg.keywords;
 
-"./" => pkg.generatePackageDefinition;
+"../package/" => pkg.generatePackageDefinition;
 
-PackageVersion ver("DMX", "0.1.0");
+PackageVersion ver("DMX", version);
 
 "1.5.5.0" => ver.languageVersionMin;
 
-"any" => ver.os;
+"mac" => ver.os;
 "all" => ver.arch;
 
-ver.addFile("../build/Release/DMX.chug");
+ver.addFile(me.dir() + "../build/DMX.chug");
 
 // wrap up all our files into a zip file, and tell Chumpinate what URL
 // this zip file will be located at.
-ver.generateVersion("../releases/" + ver.version(), "DMX", "https://ccrma.stanford.edu/~hoangben/ChucK-DMX/releases/" + ver.version() + "/DMX.zip");
+ver.generateVersion("../releases/" + ver.version(), "DMX_mac", "https://ccrma.stanford.edu/~hoangben/ChucK-DMX/releases/" + ver.version() + "/" + ver.os() + "/DMX.zip");
 
-ver.generateVersionDefinition("DMX", "./");
+ver.generateVersionDefinition("DMX_mac", "../package/");
