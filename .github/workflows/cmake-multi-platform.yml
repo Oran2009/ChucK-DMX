@@ -70,29 +70,29 @@ jobs:
 
   package:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
-
+  
       # Download each platform artifact
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
           name: DMX-windows-latest
           path: artifacts/Windows
-
+  
       - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
           name: DMX-ubuntu-latest
           path: artifacts/Linux
-
+  
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
           name: DMX-macos-latest
           path: artifacts/macOS
-
+  
       # Prepare the expected directory structure for each platform's .chug file
       - name: Prepare directories for Chumpinate
         run: |
@@ -106,25 +106,22 @@ jobs:
           mv artifacts/Windows/DMX.chug builds/win/DMX.chug
           mv artifacts/Linux/DMX.chug builds/linux/DMX.chug
           mv artifacts/macOS/DMX.chug builds/mac/DMX.chug
-          
-      # Install ChucK for Linux (package job runs on Ubuntu)
+  
+      # Install ChucK via Homebrew on macOS
       - name: Install ChucK
-        run: |
-          wget https://chuck.stanford.edu/release/files/chuck-1.5.5.5.tgz
-          tar xf chuck-1.5.5.5.tgz
-          sudo cp chuck-1.5.5.5/bin/chuck /usr/local/bin/
-
+        run: brew install chuck
+  
       # Run Chumpinate build-pkg scripts using the .chug files in package dir
       - name: Run Chumpinate Windows script
         run: chuck scripts/build-pkg-win.ck
-
+  
       - name: Run Chumpinate Linux script
         run: chuck scripts/build-pkg-linux.ck
-
+  
       - name: Run Chumpinate macOS script
         run: chuck scripts/build-pkg-mac.ck
-
-      # Upload combined packages artifact
+  
+      # Upload combined package artifact
       - name: Upload combined package artifact
         uses: actions/upload-artifact@v4
         with:
