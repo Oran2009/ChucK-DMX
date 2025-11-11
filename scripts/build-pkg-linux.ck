@@ -16,7 +16,7 @@ Package pkg("DMX");
 
 ["DMX", "lighting", "light bulbs", "ArtNet", "sACN", "Serial"] => pkg.keywords;
 
-"../package/" => pkg.generatePackageDefinition;
+"package/" => pkg.generatePackageDefinition;
 
 PackageVersion ver("DMX", version);
 
