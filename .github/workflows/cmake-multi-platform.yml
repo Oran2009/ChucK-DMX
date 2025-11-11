@@ -19,118 +19,120 @@ jobs:
             config: Release
             build_dir: build
             chug_path: build/DMX.chug
-            chumpinate_script: scripts/build-pkg-linux.ck
+            artifact_name: DMX-ubuntu-latest
           - os: windows-latest
             generator: "Visual Studio 17 2022"
             config: Release
             build_dir: build
             chug_path: build/Release/DMX.chug
-            chumpinate_script: scripts/build-pkg-win.ck
+            artifact_name: DMX-windows-latest
           - os: macos-latest
             generator: "Unix Makefiles"
             config: Release
             build_dir: build
             chug_path: build/DMX.chug
-            chumpinate_script: scripts/build-pkg-mac.ck
+            artifact_name: DMX-macos-latest
 
     runs-on: ${{ matrix.os }}
 
-    outputs:
-      artifact-name: DMX-${{ matrix.os }}
-
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Install Dependencies (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y uuid-dev
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y uuid-dev
 
-    - name: Set up CMake
-      uses: lukka/get-cmake@v4.1.2
+      - name: Set up CMake
+        uses: lukka/get-cmake@v4.1.2
 
-    - name: Configure CMake
-      run: |
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -A x64 -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=windows -DETCPAL_NET_TARGET=windows
-        elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-          cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=macos -DETCPAL_NET_TARGET=macos
-        else
-          cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=linux -DETCPAL_NET_TARGET=linux
-        fi
-      shell: bash
+      - name: Configure CMake
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -A x64 -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=windows -DETCPAL_NET_TARGET=windows
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=macos -DETCPAL_NET_TARGET=macos
+          else
+            cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=linux -DETCPAL_NET_TARGET=linux
+          fi
+        shell: bash
 
-    - name: Build
-      run: cmake --build ${{ matrix.build_dir }} --config ${{ matrix.config }}
-      shell: bash
+      - name: Build
+        run: cmake --build ${{ matrix.build_dir }} --config ${{ matrix.config }}
+        shell: bash
 
-    - name: Upload DMX.chug artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: DMX-${{ matrix.os }}
-        path: ${{ matrix.chug_path }}
+      - name: Upload DMX.chug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.chug_path }}
 
   package:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
+  
+      # Download each platform artifact
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: DMX-windows-latest
+          path: artifacts/Windows
+  
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: DMX-ubuntu-latest
+          path: artifacts/Linux
+  
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: DMX-macos-latest
+          path: artifacts/macOS
+  
+      # Prepare the expected directory structure for each platform's .chug file
+      - name: Prepare directories for Chumpinate
+        run: |
+          mkdir -p package
+          mkdir -p releases
+          
+          mkdir -p builds/win
+          mkdir -p builds/linux
+          mkdir -p builds/mac
+          
+          mv artifacts/Windows/DMX.chug builds/win/DMX.chug
+          mv artifacts/Linux/DMX.chug builds/linux/DMX.chug
+          mv artifacts/macOS/DMX.chug builds/mac/DMX.chug
+  
+      # Install ChucK and Chumpinate from official .pkg
+      - name: Install ChucK and Chump from official macOS .pkg
+        run: |
+          curl -L -o chuck-1.5.5.5.pkg https://chuck.stanford.edu/release/files/exe/chuck-1.5.5.5.pkg
+          sudo installer -pkg chuck-1.5.5.5.pkg -target /
+          which chuck
+          which chump
 
-    - name: Download Windows artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: DMX-windows-latest
-        path: artifacts/Windows
-
-    - name: Download Linux artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: DMX-ubuntu-latest
-        path: artifacts/Linux
-
-    - name: Download macOS artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: DMX-macos-latest
-        path: artifacts/macOS
-
-    - name: Prepare package and releases folders
-      run: |
-        mkdir -p package
-        mkdir -p releases
-
-    - name: Install ChucK on Linux
-      if: runner.os == 'Linux'
-      run: |
-        wget https://chuck.cs.princeton.edu/release/Linux/chuck-1.5.5.3.tgz
-        tar xf chuck-1.5.5.3.tgz
-        sudo cp chuck-1.5.5.3/bin/chuck /usr/local/bin/
-    
-    - name: Install ChucK on macOS
-      if: runner.os == 'macOS'
-      run: brew install chuck
-
-    - name: Install ChucK on Windows
-      if: runner.os == 'Windows'
-      run: choco install chuck
-
-    - name: Run Chumpinate Windows script
-      if: runner.os == 'Windows'
-      run: chuck scripts/build-pkg-win.ck
-
-    - name: Run Chumpinate Linux script
-      if: runner.os == 'Linux'
-      run: chuck scripts/build-pkg-linux.ck
-
-    - name: Run Chumpinate macOS script
-      if: runner.os == 'macOS'
-      run: chuck scripts/build-pkg-mac.ck
-
-    - name: Upload combined package artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: DMX-Packages-All
-        path: |
-          package
-          releases
+      - name: Install Chumpinate
+        run: chump install Chumpinate
+          
+      # Run Chumpinate build-pkg scripts using the .chug files in package dir
+      - name: Run Chumpinate Windows script
+        run: chuck scripts/build-pkg-win.ck
+  
+      - name: Run Chumpinate Linux script
+        run: chuck scripts/build-pkg-linux.ck
+  
+      - name: Run Chumpinate macOS script
+        run: chuck scripts/build-pkg-mac.ck
+  
+      # Upload combined package artifact
+      - name: Upload combined package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DMX-Packages-All
+          path: |
+            package
+            releases
