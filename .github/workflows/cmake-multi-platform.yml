@@ -110,6 +110,9 @@ jobs:
       # Install ChucK via Homebrew on macOS
       - name: Install ChucK
         run: brew install chuck
+
+      - name: Install Chumpinate
+        run: chump install Chumpinate
   
       # Run Chumpinate build-pkg scripts using the .chug files in package dir
       - name: Run Chumpinate Windows script
