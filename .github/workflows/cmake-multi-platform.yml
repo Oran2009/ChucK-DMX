@@ -96,7 +96,7 @@ jobs:
       # Prepare the expected directory structure for each platform's .chug file
       - name: Prepare directories for Chumpinate
         run: |
-          mkdir -p package
+          mkdir -p package/DMX
           mkdir -p releases
           
           mkdir -p builds/win
