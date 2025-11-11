@@ -25,10 +25,10 @@ PackageVersion ver("DMX", version);
 "mac" => ver.os;
 "all" => ver.arch;
 
-ver.addFile(me.dir() + "../builds/macos/DMX.chug");
+ver.addFile("builds/macos/DMX.chug");
 
 // wrap up all our files into a zip file, and tell Chumpinate what URL
 // this zip file will be located at.
-ver.generateVersion(me.dir() + "../releases/" + ver.version(), "DMX_mac", "https://ccrma.stanford.edu/~hoangben/ChucK-DMX/releases/" + ver.version() + "/" + ver.os() + "/DMX.zip");
+ver.generateVersion("releases/" + ver.version(), "DMX_mac", "https://ccrma.stanford.edu/~hoangben/ChucK-DMX/releases/" + ver.version() + "/" + ver.os() + "/DMX.zip");
 
-ver.generateVersionDefinition("DMX_mac", me.dir() + "../package/");
+ver.generateVersionDefinition("DMX_mac", "package/");
