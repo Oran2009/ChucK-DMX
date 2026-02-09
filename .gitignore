@@ -437,3 +437,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+.claude/
+nul

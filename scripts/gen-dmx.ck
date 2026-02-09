@@ -29,4 +29,4 @@ doc.addGroup(
 doc.sort(true);
 
 // generate
-doc.outputToDir("../../../ccrma/home/Web/ChucK-DMX/api/", "ChucK-DMX API Reference (v0.1.0)");
+doc.outputToDir("../../../ccrma/home/Web/ChucK-DMX/api/", "ChucK-DMX API Reference (v0.1.1)");
