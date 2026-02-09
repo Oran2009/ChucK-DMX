@@ -23,17 +23,22 @@
 // Setup
 DMX dmx;
 DMX.SACN => dmx.protocol;    // use protocol constants
-1 => dmx.universe;
+1 => dmx.universe;           // universe 1 is the active universe
+"My ChucK Show" => dmx.name; // source name visible in sACN/ArtNet
 44 => dmx.rate;
 // "COM5" => dmx.port;       // uncomment for serial protocols
 // 150 => dmx.priority;      // sACN priority (0-200, default 100)
 
-// Initialize and check connection
+// Add a second universe for multi-universe output
+dmx.addUniverse(2);
+
+// Initialize and check connection (inits all configured universes)
 if (!dmx.init()) {
     <<< "DMX init failed!" >>>;
     me.exit();
 }
 <<< "DMX connected:", dmx.connected() >>>;
+<<< "Source name:", dmx.name() >>>;
 
 // Start background send thread (handles sending + fade interpolation)
 dmx.start();
@@ -81,7 +86,7 @@ fun void rampColorsAndTone() {
 
             colors[idx] @=> int currColor[];
 
-            // Set DMX using batch channels (atomic update for the whole fixture)
+            // Set DMX on universe 1 using batch channels
             [
                 (currColor[0] * dim) $ int,
                 (currColor[1] * dim) $ int,
@@ -89,8 +94,23 @@ fun void rampColorsAndTone() {
                 (currColor[3] * dim) $ int,
                 (currColor[4] * dim) $ int
             ] @=> int scaled[];
+
+            1 => dmx.universe;           // target universe 1
             dmx.channels(baseAddr, scaled);
-            // Background thread handles sending automatically
+
+            // Mirror inverted colors on universe 2
+            [
+                (currColor[2] * dim) $ int,
+                (currColor[1] * dim) $ int,
+                (currColor[0] * dim) $ int,
+                (currColor[4] * dim) $ int,
+                (currColor[3] * dim) $ int
+            ] @=> int inverted[];
+
+            2 => dmx.universe;           // target universe 2
+            dmx.channels(baseAddr, inverted);
+
+            // Background thread handles sending all universes
 
             // Smooth sine frequency sweep synced to ramp dim
             220.0 + dim * 880.0 => float freq;
@@ -106,10 +126,19 @@ fun void rampColorsAndTone() {
             // Sudden jumps phase - use fade() for smooth color transitions
             colors[idx] @=> int currColor[];
 
-            // Fade each channel to the new color over 100ms
+            // Fade channels on universe 1
+            1 => dmx.universe;
             for (int i; i < 5; i++) {
                 dmx.fade(baseAddr + i, currColor[i], 100);
             }
+
+            // Fade complementary colors on universe 2
+            2 => dmx.universe;
+            dmx.fade(baseAddr, currColor[2], 100);
+            dmx.fade(baseAddr + 1, currColor[1], 100);
+            dmx.fade(baseAddr + 2, currColor[0], 100);
+            dmx.fade(baseAddr + 3, currColor[4], 100);
+            dmx.fade(baseAddr + 4, currColor[3], 100);
 
             // Sharp staccato tone: short burst at higher freq
             880 + 660 * (idx % 2) => float freq;

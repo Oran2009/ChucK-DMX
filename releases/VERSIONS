@@ -36,16 +36,29 @@ ChucK-DMX VERSIONS log
 (added) sACN priority support via priority(p) getter/setter (0-200,
     default 100); can be changed live after init via ChangePriority
 (added) blackout() method to zero all 512 channels and cancel all
-    active fades
+    active fades across all universes
 (added) static protocol constants: DMX.SERIAL_RAW, DMX.SERIAL,
     DMX.SACN, DMX.ARTNET
+(added) multi-universe support: addUniverse(uni) and removeUniverse(uni)
+    for managing multiple DMX universes per instance; sACN adds/removes
+    universes live, ArtNet supports up to 4 ports per node
+(added) universe() setter auto-creates universe data if it doesn't
+    exist; universe selects the active universe for channel/fade ops
+(added) name(string) getter/setter for sACN source name and ArtNet
+    short/long name (default: 'ChucK DMX'); sACN updates live via
+    ChangeName, ArtNet requires re-init
 (updated) init() now returns int (1 on success, 0 on failure) so
     ChucK scripts can detect and handle initialization errors
 (updated) channel values are now clamped to 0-255 with a warning
     instead of silent truncation via unsigned char cast
 (updated) protocol/rate/port/universe setters now return their value
     for idiomatic ChucK chaining (e.g., DMX.SACN => dmx.protocol)
-(updated) universe setter validates range 1-63999
+(updated) universe setter validates range 1-63999; auto-creates
+    universe data buffer on first use
+(updated) send() transmits all configured universes for sACN/ArtNet;
+    Serial sends only the active universe
+(updated) priority() live update now applies to all configured sACN
+    universes
 (updated) all error handling uses stderr warnings instead of throwing
     C++ exceptions through the ChucK VM
 (updated) Enttec protocol magic numbers replaced with named constants

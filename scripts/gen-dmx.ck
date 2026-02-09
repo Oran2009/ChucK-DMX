@@ -22,7 +22,7 @@ doc.addGroup(
     // file name
     "dmx",
     // group description
-    "The DMX class provides control over DMX512 lighting data and protocol selection for ChucK."
+    "The DMX class provides control over DMX512 lighting data and protocol selection for ChucK, with multi-universe support."
 );
 
 // sort for now until order is preserved by CKDoc
