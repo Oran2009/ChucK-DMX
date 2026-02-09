@@ -32,8 +32,6 @@ set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "" SUFFIX ".chug")
 
 # Link libraries: static serial + libartnet + sACN (which includes etcpal) + platform libs
 target_link_libraries(${PROJECT_NAME}
-    ${SERIAL_LIBRARY}
-    ${ARTNET_LIBRARY}
     serial
     libartnet
     sACN

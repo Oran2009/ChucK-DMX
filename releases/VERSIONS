@@ -1,0 +1,58 @@
+------------------
+ChucK-DMX VERSIONS log
+------------------
+
+0.1.1 (February 2026)
+=======
+(fixed) critical thread safety: data races on protocol, universe,
+    update interval, and last send time in all send paths; all shared
+    state is now snapshotted under a single lock before transmission
+(fixed) potential deadlock from inconsistent lock ordering between
+    serial_mutex and state_mutex
+(fixed) exception slicing (throw e instead of throw) in all ChucK VM
+    callbacks; exceptions no longer propagate through the ChucK VM
+(fixed) deinit called on uninitialized protocols (sACN Deinit without
+    Init, artnet_destroy on nullptr); initialization state is now
+    tracked with per-protocol flags
+(fixed) Windows usleep macro resolving to Sleep(0) for sub-millisecond
+    DMX break timing; replaced with QueryPerformanceCounter busy-wait
+(fixed) sACN Init/Deinit not reference-counted across multiple DMX
+    instances; added global reference counting
+(fixed) reconnect attempts on every failed send flooding stderr; added
+    5-second backoff cooldown between reconnect attempts
+(added) background send thread via start()/stop() for automatic DMX
+    transmission at the configured rate
+(added) fade(channel, target, durationMs) for linear channel transitions
+    processed by the background thread; setting a channel directly
+    cancels any active fade on that channel
+(added) channels(startChannel, values[]) for atomic batch updates of
+    consecutive DMX channels under a single lock
+(added) channel getter: channel(ch) with one argument returns the
+    current value (0-255) of a DMX channel
+(added) connected() method returning whether the current protocol is
+    initialized and ready to send
+(added) DMX.ports() static method to enumerate available serial ports
+    as a comma-separated string
+(added) sACN priority support via priority(p) getter/setter (0-200,
+    default 100); can be changed live after init via ChangePriority
+(added) blackout() method to zero all 512 channels and cancel all
+    active fades
+(added) static protocol constants: DMX.SERIAL_RAW, DMX.SERIAL,
+    DMX.SACN, DMX.ARTNET
+(updated) init() now returns int (1 on success, 0 on failure) so
+    ChucK scripts can detect and handle initialization errors
+(updated) channel values are now clamped to 0-255 with a warning
+    instead of silent truncation via unsigned char cast
+(updated) protocol/rate/port/universe setters now return their value
+    for idiomatic ChucK chaining (e.g., DMX.SACN => dmx.protocol)
+(updated) universe setter validates range 1-63999
+(updated) all error handling uses stderr warnings instead of throwing
+    C++ exceptions through the ChucK VM
+(updated) Enttec protocol magic numbers replaced with named constants
+(updated) CMakeLists.txt: removed undefined ${SERIAL_LIBRARY} and
+    ${ARTNET_LIBRARY} variables from target_link_libraries
+(updated) DMX-test.ck to demonstrate new API features
+
+0.1.0
+=======
+Initial Release
