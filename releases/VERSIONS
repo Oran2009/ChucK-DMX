@@ -4,67 +4,41 @@ ChucK-DMX VERSIONS log
 
 0.1.1 (February 2026)
 =======
-(fixed) critical thread safety: data races on protocol, universe,
-    update interval, and last send time in all send paths; all shared
-    state is now snapshotted under a single lock before transmission
-(fixed) potential deadlock from inconsistent lock ordering between
-    serial_mutex and state_mutex
-(fixed) exception slicing (throw e instead of throw) in all ChucK VM
-    callbacks; exceptions no longer propagate through the ChucK VM
-(fixed) deinit called on uninitialized protocols (sACN Deinit without
-    Init, artnet_destroy on nullptr); initialization state is now
-    tracked with per-protocol flags
-(fixed) Windows usleep macro resolving to Sleep(0) for sub-millisecond
-    DMX break timing; replaced with QueryPerformanceCounter busy-wait
-(fixed) sACN Init/Deinit not reference-counted across multiple DMX
-    instances; added global reference counting
-(fixed) reconnect attempts on every failed send flooding stderr; added
-    5-second backoff cooldown between reconnect attempts
-(added) background send thread via start()/stop() for automatic DMX
-    transmission at the configured rate
-(added) fade(channel, target, durationMs) for linear channel transitions
-    processed by the background thread; setting a channel directly
-    cancels any active fade on that channel
-(added) channels(startChannel, values[]) for atomic batch updates of
-    consecutive DMX channels under a single lock
-(added) channel getter: channel(ch) with one argument returns the
-    current value (0-255) of a DMX channel
-(added) connected() method returning whether the current protocol is
-    initialized and ready to send
-(added) DMX.ports() static method to enumerate available serial ports
-    as a comma-separated string
-(added) sACN priority support via priority(p) getter/setter (0-200,
-    default 100); can be changed live after init via ChangePriority
-(added) blackout() method to zero all 512 channels and cancel all
-    active fades across all universes
-(added) static protocol constants: DMX.SERIAL_RAW, DMX.SERIAL,
-    DMX.SACN, DMX.ARTNET
-(added) multi-universe support: addUniverse(uni) and removeUniverse(uni)
-    for managing multiple DMX universes per instance; sACN adds/removes
-    universes live, ArtNet supports up to 4 ports per node
-(added) universe() setter auto-creates universe data if it doesn't
-    exist; universe selects the active universe for channel/fade ops
-(added) name(string) getter/setter for sACN source name and ArtNet
-    short/long name (default: 'ChucK DMX'); sACN updates live via
-    ChangeName, ArtNet requires re-init
-(updated) init() now returns int (1 on success, 0 on failure) so
-    ChucK scripts can detect and handle initialization errors
-(updated) channel values are now clamped to 0-255 with a warning
-    instead of silent truncation via unsigned char cast
-(updated) protocol/rate/port/universe setters now return their value
-    for idiomatic ChucK chaining (e.g., DMX.SACN => dmx.protocol)
-(updated) universe setter validates range 1-63999; auto-creates
-    universe data buffer on first use
+(BREAKING) removed rate(). send() no longer rate-limits internally.
+(added) fade(ch, target, durationMs) for smooth channel transitions;
+    call send() periodically (e.g., every 23ms) to animate fades
+(added) fade(universe, ch, target, durationMs) to fade on a specific
+    universe without switching the active universe
+(added) channels(startCh, values[]) for batch-setting consecutive channels
+(added) channel(ch) getter returning the current value (0-255)
+(added) channel(universe, ch, value) to set a channel on a specific
+    universe without switching the active universe
+(added) connected() to check if the protocol is initialized and ready
+(added) DMX.ports() static method to list available serial ports
+(added) priority(p) getter/setter for sACN priority (0-200, default 100);
+    can be changed live after init
+(added) blackout() to zero all channels and cancel all fades
+(added) static protocol constants: DMX.SERIAL_RAW, DMX.SERIAL, DMX.SACN,
+    DMX.ARTNET
+(added) multi-universe support: addUniverse(uni), removeUniverse(uni),
+    universeCount(), and universes()
+(added) universe() setter auto-creates universe data on first use
+(added) name(string) getter/setter for sACN source name and ArtNet node
+    name (default: 'ChucK DMX')
+(added) debug(enable) to print channel values to stderr on each send()
+(updated) init() returns 1 on success, 0 on failure
+(updated) channel values clamped to 0-255 with a warning
+(updated) setters return their value for ChucK chaining
+    (e.g., DMX.SACN => dmx.protocol)
 (updated) send() transmits all configured universes for sACN/ArtNet;
     Serial sends only the active universe
-(updated) priority() live update now applies to all configured sACN
-    universes
-(updated) all error handling uses stderr warnings instead of throwing
-    C++ exceptions through the ChucK VM
-(updated) Enttec protocol magic numbers replaced with named constants
-(updated) CMakeLists.txt: removed undefined ${SERIAL_LIBRARY} and
-    ${ARTNET_LIBRARY} variables from target_link_libraries
-(updated) DMX-test.ck to demonstrate new API features
+(fixed) various race conditions and threading issues
+(fixed) ArtNet universe mapping (universe 1 now correctly maps to
+    ArtNet address 0:0:0)
+(fixed) Windows serial timing for DMX break signal
+(fixed) sACN receivers losing connection between sends
+(fixed) multiple DMX instances could interfere with each other's sACN
+    initialization
 
 0.1.0
 =======

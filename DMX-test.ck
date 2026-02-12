@@ -1,180 +1,198 @@
 //--------------------------------------------------------------------
-// DMX ChuGin Test
+// DMX ChuGin Test — 8 five-channel fixtures on universe 1
+// Tests all protocols: sACN, ArtNet, Serial, Serial Raw
 //--------------------------------------------------------------------
-// 1) try running this program after building your chugin
-//    (the build process should yield a DMX.chug file)
-//
-// 2) you can manually load the chugin when you run this program
-//    `chuck --chugin:x64/Debug/DMX.chug DMX-test.ck`
-//
-// 3) OR you can put the chugin into your chugins search path
-//    NOTE: not recommended until you feel the chugin to be
-//    reasonably stable, as chugins in your chugins search paths
-//    will automatically load every time you run `chuck` or
-//    start the VM in miniAudicle...
-//
-// Want to see more information? Add the --verbose:3 (-v3) flag:
-//    `chuck --chugin:DMX.chug DMX-test.ck -v3`
+// `chuck --chugin:build/Release/DMX.chug DMX-test.ck`
 //--------------------------------------------------------------------
 
-// List available serial ports
-<<< "Available serial ports:", DMX.ports() >>>;
+8 => int NUM;
+5 => int CH;
 
-// Setup
-DMX dmx;
-DMX.SACN => dmx.protocol;    // use protocol constants
-1 => dmx.universe;           // universe 1 is the active universe
-"My ChucK Show" => dmx.name; // source name visible in sACN/ArtNet
-44 => dmx.rate;
-// "COM5" => dmx.port;       // uncomment for serial protocols
-// 150 => dmx.priority;      // sACN priority (0-200, default 100)
+KBHit kb;
 
-// Add a second universe for multi-universe output
-dmx.addUniverse(2);
-
-// Initialize and check connection (inits all configured universes)
-if (!dmx.init()) {
-    <<< "DMX init failed!" >>>;
-    me.exit();
+fun void waitForKey(string msg) {
+    <<< "\n[" + msg + " — press any key]" >>>;
+    kb => now;
+    kb.getchar();
 }
-<<< "DMX connected:", dmx.connected() >>>;
-<<< "Source name:", dmx.name() >>>;
 
-// Start background send thread (handles sending + fade interpolation)
-dmx.start();
-
-1 => int baseAddr;
-
-// Audio setup
-SinOsc osc => dac;
-0.05 => float baseGain;
-
-// Color palette: R, G, B, NW, WW
-[
-    [255, 0, 0, 0, 0],
-    [0, 255, 0, 0, 0],
-    [0, 0, 255, 0, 0],
-    [255, 255, 0, 0, 0],
-    [0, 255, 255, 0, 0],
-    [255, 0, 255, 0, 0],
-    [255, 255, 255, 0, 0],
-    [255, 255, 255, 128, 128]
-] @=> int colors[][];
-
-fun void rampColorsAndTone() {
-    0 => int idx;
-    0.0 => float dim;
-    0.02 => float step;
-    true => int rampUp;
-    true => int rampPhase; // true: ramping, false: sudden jumps
-    8::second => dur phaseDuration;
-    0::second => dur elapsed;
-
-    while (true) {
-        if (rampPhase) {
-            // Smooth ramp using fades
-            if (rampUp) step +=> dim; else step -=> dim;
-
-            if (dim > 1.0) {
-                1.0 => dim;
-                false => rampUp;
-            } else if (dim < 0.0) {
-                0.0 => dim;
-                true => rampUp;
-                (idx + 1) % colors.size() => idx;
-            }
-
-            colors[idx] @=> int currColor[];
-
-            // Set DMX on universe 1 using batch channels
-            [
-                (currColor[0] * dim) $ int,
-                (currColor[1] * dim) $ int,
-                (currColor[2] * dim) $ int,
-                (currColor[3] * dim) $ int,
-                (currColor[4] * dim) $ int
-            ] @=> int scaled[];
-
-            1 => dmx.universe;           // target universe 1
-            dmx.channels(baseAddr, scaled);
-
-            // Mirror inverted colors on universe 2
-            [
-                (currColor[2] * dim) $ int,
-                (currColor[1] * dim) $ int,
-                (currColor[0] * dim) $ int,
-                (currColor[4] * dim) $ int,
-                (currColor[3] * dim) $ int
-            ] @=> int inverted[];
-
-            2 => dmx.universe;           // target universe 2
-            dmx.channels(baseAddr, inverted);
-
-            // Background thread handles sending all universes
-
-            // Smooth sine frequency sweep synced to ramp dim
-            220.0 + dim * 880.0 => float freq;
-            osc.freq(freq);
-
-            // Smooth gain modulation
-            baseGain + 0.5 * dim => float g;
-            osc.gain(g);
-
-            30::ms => now;
-            30::ms +=> elapsed;
-        } else {
-            // Sudden jumps phase - use fade() for smooth color transitions
-            colors[idx] @=> int currColor[];
-
-            // Fade channels on universe 1
-            1 => dmx.universe;
-            for (int i; i < 5; i++) {
-                dmx.fade(baseAddr + i, currColor[i], 100);
-            }
-
-            // Fade complementary colors on universe 2
-            2 => dmx.universe;
-            dmx.fade(baseAddr, currColor[2], 100);
-            dmx.fade(baseAddr + 1, currColor[1], 100);
-            dmx.fade(baseAddr + 2, currColor[0], 100);
-            dmx.fade(baseAddr + 3, currColor[4], 100);
-            dmx.fade(baseAddr + 4, currColor[3], 100);
-
-            // Sharp staccato tone: short burst at higher freq
-            880 + 660 * (idx % 2) => float freq;
-            osc.freq(freq);
-            1.0 => osc.gain;
-            80::ms => now;
-            0.0 => osc.gain;
-
-            // Pause silent till next burst
-            420::ms => now;
-
-            (idx + 1) % colors.size() => idx;
-            500::ms => now; // accumulate duration
-            500::ms +=> elapsed;
-        }
-
-        // Switch phase every phaseDuration
-        if (elapsed >= phaseDuration) {
-            !rampPhase => rampPhase;
-            0::second => elapsed;
-            // Reset ramp variables if switching to ramp
-            if (rampPhase) {
-                0.0 => dim;
-                true => rampUp;
-            }
-        }
+fun void setAll(DMX dmx, int r, int g, int b, int nw, int ww) {
+    for (int i; i < NUM; i++) {
+        dmx.channels(1 + i * CH, [r, g, b, nw, ww]);
     }
 }
 
-fun void play() {
-    rampColorsAndTone();
+fun void runTests(DMX dmx) {
+    // --- Test 1: Chase ---
+    waitForKey("Test 1: Chase");
+    dmx.blackout();
+    dmx.send();
+    for (int i; i < NUM; i++) {
+        if (i > 0) dmx.channels(1 + (i-1) * CH, [0, 0, 0, 0, 0]);
+        dmx.channels(1 + i * CH, [255, 255, 255, 255, 255]);
+        dmx.send();
+        <<< "  Fixture", i + 1, "ON" >>>;
+        500::ms => now;
+    }
+
+    // --- Test 2: Single channel set/get ---
+    waitForKey("Test 2: channel() set/get");
+    dmx.blackout();
+    dmx.send();
+    dmx.channel(1, 128);
+    dmx.send();
+    <<< "  Set ch1=128, read back:", dmx.channel(1) >>>;
+    dmx.channel(3, 200);
+    dmx.send();
+    <<< "  Set ch3=200, read back:", dmx.channel(3) >>>;
+    <<< "  Unset ch5, read back:", dmx.channel(5) >>>;
+    1::second => now;
+
+    // --- Test 3: All red ---
+    waitForKey("Test 3: All red");
+    setAll(dmx, 255, 0, 0, 0, 0);
+    dmx.send();
+    2::second => now;
+
+    // --- Test 4: All green ---
+    waitForKey("Test 4: All green");
+    setAll(dmx, 0, 255, 0, 0, 0);
+    dmx.send();
+    2::second => now;
+
+    // --- Test 5: All blue ---
+    waitForKey("Test 5: All blue");
+    setAll(dmx, 0, 0, 255, 0, 0);
+    dmx.send();
+    2::second => now;
+
+    // --- Test 6: Blackout ---
+    waitForKey("Test 6: Blackout");
+    dmx.blackout();
+    dmx.send();
+    <<< "  All channels zeroed, ch1:", dmx.channel(1) >>>;
+    1::second => now;
+
+    // --- Test 7: Fade up ---
+    waitForKey("Test 7: Fade all to white (2s)");
+    dmx.blackout();
+    dmx.send();
+    for (int i; i < NUM; i++) {
+        for (int c; c < CH; c++) {
+            dmx.fade(1 + i * CH + c, 255, 2000);
+        }
+    }
+    now => time t;
+    while (now < t + 2500::ms) {
+        dmx.send();
+        23::ms => now;
+    }
+    <<< "  After fade, ch1:", dmx.channel(1) >>>;
+
+    // --- Test 8: Fade down ---
+    waitForKey("Test 8: Fade all to black (2s)");
+    for (int i; i < NUM; i++) {
+        for (int c; c < CH; c++) {
+            dmx.fade(1 + i * CH + c, 0, 2000);
+        }
+    }
+    now => time t2;
+    while (now < t2 + 2500::ms) {
+        dmx.send();
+        23::ms => now;
+    }
+    <<< "  After fade, ch1:", dmx.channel(1) >>>;
+
+    // --- Test 9: Staggered fade wave ---
+    waitForKey("Test 9: Staggered fade wave");
+    1 => dmx.debug;
+    for (int i; i < NUM; i++) {
+        for (int c; c < CH; c++) {
+            dmx.fade(1 + i * CH + c, 255, 500);
+        }
+        now => time tw;
+        while (now < tw + 200::ms) {
+            dmx.send();
+            23::ms => now;
+        }
+    }
+    now => time tw2;
+    while (now < tw2 + 2::second) {
+        dmx.send();
+        23::ms => now;
+    }
+
+    0 => dmx.debug;
+
+    // --- Test 10: Live config changes ---
+    waitForKey("Test 10: Live name/priority change");
+    "New Name" => dmx.name;
+    <<< "  Name changed to:", dmx.name() >>>;
+    150 => dmx.priority;
+    <<< "  Priority changed to:", dmx.priority() >>>;
+    setAll(dmx, 255, 255, 255, 255, 255);
+    dmx.send();
+    1::second => now;
+    dmx.blackout();
+    dmx.send();
+    "DMX Test" => dmx.name;
+    100 => dmx.priority;
 }
 
-spork ~ play();
+// Protocol names and constants
+[DMX.SACN, DMX.ARTNET, DMX.SERIAL, DMX.SERIAL_RAW] @=> int protocols[];
+["sACN", "ArtNet", "Serial", "Serial Raw"] @=> string protoNames[];
 
-// Keep the VM alive
-while (true) {
-    25::ms => now;
+// Detect serial port for serial protocols
+DMX.ports() => string portList;
+"" => string serialPort;
+if (portList.length() > 0) {
+    portList.find(",") => int comma;
+    if (comma >= 0) portList.substring(0, comma) => serialPort;
+    else portList => serialPort;
 }
+
+// Single DMX object reused across protocols so init() properly shuts down
+// the previous protocol (e.g. sACN source stops before ArtNet starts).
+DMX dmx;
+
+for (int p; p < protocols.size(); p++) {
+    <<< "\n============================================" >>>;
+    <<< "  PROTOCOL:", protoNames[p] >>>;
+    <<< "============================================" >>>;
+
+    if (protocols[p] == DMX.SERIAL || protocols[p] == DMX.SERIAL_RAW) {
+        if (serialPort.length() == 0) {
+            <<< "  No serial ports found, skipping", protoNames[p] >>>;
+            continue;
+        }
+        <<< "  Using serial port:", serialPort >>>;
+    }
+
+    protocols[p] => dmx.protocol;
+    1 => dmx.universe;
+    "DMX Test" => dmx.name;
+    100 => dmx.priority;
+
+    if (protocols[p] == DMX.SERIAL || protocols[p] == DMX.SERIAL_RAW) {
+        serialPort => dmx.port;
+    }
+
+    if (!dmx.init()) {
+        <<< "  Init failed for", protoNames[p], "— skipping" >>>;
+        continue;
+    }
+    <<< "  Connected:", dmx.connected() >>>;
+
+    runTests(dmx);
+
+    // Blackout and send before switching protocols
+    dmx.blackout();
+    dmx.send();
+    100::ms => now;
+    <<< "\n  Done with", protoNames[p] >>>;
+}
+
+<<< "\n============================================" >>>;
+<<< "  ALL TESTS COMPLETE" >>>;
+<<< "============================================" >>>;

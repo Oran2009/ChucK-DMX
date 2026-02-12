@@ -13,8 +13,6 @@
 #include <cstring>
 #include <cmath>
 #include <mutex>
-#include <atomic>
-#include <thread>
 #include <map>
 #include <vector>
 
@@ -52,14 +50,14 @@ CK_DLL_MFUN(dmx_get_protocol);
 CK_DLL_MFUN(dmx_protocol);
 CK_DLL_MFUN(dmx_get_channel);
 CK_DLL_MFUN(dmx_channel);
+CK_DLL_MFUN(dmx_channel_uni);
 CK_DLL_MFUN(dmx_channels);
-CK_DLL_MFUN(dmx_get_rate);
-CK_DLL_MFUN(dmx_rate);
 
 CK_DLL_MFUN(dmx_init);
 CK_DLL_MFUN(dmx_send);
 CK_DLL_MFUN(dmx_blackout);
 CK_DLL_MFUN(dmx_connected);
+CK_DLL_MFUN(dmx_debug);
 
 // serial
 CK_DLL_MFUN(dmx_get_port);
@@ -71,6 +69,8 @@ CK_DLL_MFUN(dmx_get_universe);
 CK_DLL_MFUN(dmx_universe);
 CK_DLL_MFUN(dmx_add_universe);
 CK_DLL_MFUN(dmx_remove_universe);
+CK_DLL_MFUN(dmx_universe_count);
+CK_DLL_MFUN(dmx_universes);
 
 // sACN priority
 CK_DLL_MFUN(dmx_get_priority);
@@ -80,12 +80,10 @@ CK_DLL_MFUN(dmx_priority);
 CK_DLL_MFUN(dmx_get_name);
 CK_DLL_MFUN(dmx_name);
 
-// background thread
-CK_DLL_MFUN(dmx_start);
-CK_DLL_MFUN(dmx_stop);
 
 // fade
 CK_DLL_MFUN(dmx_fade);
+CK_DLL_MFUN(dmx_fade_uni);
 
 // internal data offset for C++ class pointer storage
 t_CKINT dmx_data_offset = 0;
@@ -100,11 +98,14 @@ static t_CKINT dmx_ARTNET = 3;
 static std::mutex sacn_global_mutex;
 static int sacn_ref_count = 0;
 
-static void sacn_global_init() {
+static bool sacn_global_init() {
     std::lock_guard<std::mutex> lock(sacn_global_mutex);
-    if (sacn_ref_count == 0)
-        sacn::Init();
+    if (sacn_ref_count == 0) {
+        etcpal::Error err = sacn::Init();
+        if (!err.IsOk()) return false;
+    }
     sacn_ref_count++;
+    return true;
 }
 
 static void sacn_global_deinit() {
@@ -129,6 +130,10 @@ public:
     // Reconnect backoff
     static constexpr int RECONNECT_COOLDOWN_MS = 5000;
 
+    // Limits
+    static constexpr int MAX_UNIVERSES = 64;
+    static constexpr int ARTNET_MAX_PORTS = 4;
+
     struct FadeState {
         bool active;
         unsigned char start_value;
@@ -140,10 +145,16 @@ public:
     struct UniverseData {
         unsigned char dmx_data[513];
         FadeState fades[513];
+        int active_fade_count{0};
         UniverseData() {
             memset(dmx_data, 0, sizeof(dmx_data));
             memset(fades, 0, sizeof(fades));
         }
+    };
+
+    struct ArtNetMapping {
+        int universe;
+        int port_idx;
     };
 
     DMX() {
@@ -151,8 +162,7 @@ public:
     }
 
     ~DMX() {
-        stop();
-        deinit_current();
+        deinit_all();
     }
 
     Protocol protocol() {
@@ -166,7 +176,7 @@ public:
 
     int get_channel(int ch) {
         if (ch < 1 || ch > 512) return 0;
-        int uni = _active_universe.load();
+        int uni = _active_universe;
         std::lock_guard<std::mutex> lock(dmx_mutex);
         auto it = _universes.find(uni);
         if (it == _universes.end()) return 0;
@@ -182,22 +192,56 @@ public:
             std::cerr << "DMX Warning: channel() value " << value << " clamped to 0-255." << std::endl;
             value = clamp_dmx(value);
         }
-        int uni = _active_universe.load();
+        int uni = _active_universe;
         // Cancel any active fade on this channel
         {
             std::lock_guard<std::mutex> flock(fade_mutex);
             auto it = _universes.find(uni);
-            if (it != _universes.end())
+            if (it != _universes.end() && it->second.fades[ch].active) {
                 it->second.fades[ch].active = false;
+                it->second.active_fade_count--;
+            }
         }
-        std::lock_guard<std::mutex> lock(dmx_mutex);
-        auto it = _universes.find(uni);
-        if (it != _universes.end())
-            it->second.dmx_data[ch] = static_cast<unsigned char>(value);
+        {
+            std::lock_guard<std::mutex> lock(dmx_mutex);
+            auto it = _universes.find(uni);
+            if (it != _universes.end())
+                it->second.dmx_data[ch] = static_cast<unsigned char>(value);
+        }
+    }
+
+    void channel(int uni, int ch, int value) {
+        if (uni < 1 || uni > 63999) {
+            std::cerr << "DMX Warning: channel() universe " << uni << " out of range (1-63999), ignored." << std::endl;
+            return;
+        }
+        if (ch < 1 || ch > 512) {
+            std::cerr << "DMX Warning: channel() index " << ch << " out of range (1-512), ignored." << std::endl;
+            return;
+        }
+        if (value < 0 || value > 255) {
+            std::cerr << "DMX Warning: channel() value " << value << " clamped to 0-255." << std::endl;
+            value = clamp_dmx(value);
+        }
+        {
+            std::lock_guard<std::mutex> flock(fade_mutex);
+            auto it = _universes.find(uni);
+            if (it == _universes.end()) return;
+            if (it->second.fades[ch].active) {
+                it->second.fades[ch].active = false;
+                it->second.active_fade_count--;
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(dmx_mutex);
+            auto it = _universes.find(uni);
+            if (it != _universes.end())
+                it->second.dmx_data[ch] = static_cast<unsigned char>(value);
+        }
     }
 
     void channels(int startCh, const unsigned char* values, int count) {
-        int uni = _active_universe.load();
+        int uni = _active_universe;
         // Cancel fades for affected channels
         {
             std::lock_guard<std::mutex> flock(fade_mutex);
@@ -205,45 +249,37 @@ public:
             if (it != _universes.end()) {
                 for (int i = 0; i < count; i++) {
                     int ch = startCh + i;
-                    if (ch >= 1 && ch <= 512)
+                    if (ch >= 1 && ch <= 512 && it->second.fades[ch].active) {
                         it->second.fades[ch].active = false;
+                        it->second.active_fade_count--;
+                    }
                 }
             }
         }
-        std::lock_guard<std::mutex> lock(dmx_mutex);
-        auto it = _universes.find(uni);
-        if (it != _universes.end()) {
-            for (int i = 0; i < count; i++) {
-                int ch = startCh + i;
-                if (ch < 1 || ch > 512) continue;
-                it->second.dmx_data[ch] = values[i];
+        {
+            std::lock_guard<std::mutex> lock(dmx_mutex);
+            auto it = _universes.find(uni);
+            if (it != _universes.end()) {
+                for (int i = 0; i < count; i++) {
+                    int ch = startCh + i;
+                    if (ch < 1 || ch > 512) continue;
+                    it->second.dmx_data[ch] = values[i];
+                }
             }
         }
     }
 
     void blackout() {
-        std::lock_guard<std::mutex> flock(fade_mutex);
-        std::lock_guard<std::mutex> dlock(dmx_mutex);
-        for (auto& [uni, udata] : _universes) {
-            for (int i = 1; i <= 512; i++)
-                udata.fades[i].active = false;
-            memset(udata.dmx_data + 1, 0, 512);
+        {
+            std::lock_guard<std::mutex> flock(fade_mutex);
+            std::lock_guard<std::mutex> dlock(dmx_mutex);
+            for (auto& [uni, udata] : _universes) {
+                for (int i = 1; i <= 512; i++)
+                    udata.fades[i].active = false;
+                udata.active_fade_count = 0;
+                memset(udata.dmx_data + 1, 0, 512);
+            }
         }
-    }
-
-    int rate() {
-        std::lock_guard<std::mutex> lock(state_mutex);
-        if (update_interval_ms <= 0.0) return 0;
-        return static_cast<int>(std::round(1000.0 / update_interval_ms));
-    }
-    bool rate(int hz) {
-        if (hz < 1 || hz > 44) {
-            std::cerr << "DMX Warning: rate() must be 1-44 Hz, got " << hz << "." << std::endl;
-            return false;
-        }
-        std::lock_guard<std::mutex> lock(state_mutex);
-        update_interval_ms = 1000.0 / hz;
-        return true;
     }
 
     bool init() {
@@ -255,31 +291,44 @@ public:
                 uni_keys.push_back(k);
         }
 
-        std::lock_guard<std::mutex> lock(state_mutex);
-
-        deinit_all_unlocked();
-
         bool ok = false;
-        switch (_protocol) {
-        case Protocol::Serial_Raw:
-        case Protocol::Serial:
-            ok = init_Serial();
-            break;
-        case Protocol::sACN:
-            ok = init_sACN(uni_keys);
-            break;
-        case Protocol::ArtNet:
-            ok = init_ArtNet(uni_keys);
-            break;
-        }
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
 
-        if (ok)
-            last_send_time = std::chrono::steady_clock::now() - std::chrono::milliseconds(static_cast<int>(update_interval_ms));
+            deinit_all();
+
+            switch (_protocol) {
+            case Protocol::Serial_Raw:
+            case Protocol::Serial:
+                ok = init_Serial();
+                break;
+            case Protocol::sACN:
+                ok = init_sACN(uni_keys);
+                break;
+            case Protocol::ArtNet:
+                ok = init_ArtNet(uni_keys);
+                break;
+            }
+        }
 
         return ok;
     }
 
     void send() {
+        // Advance any active fades based on elapsed wall-clock time
+        update_fades();
+
+        // State snapshot under state_mutex (before data snapshot)
+        Protocol current_protocol;
+        ArtNetMapping artnet_snap[ARTNET_MAX_PORTS];
+        int artnet_snap_count;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            current_protocol = _protocol;
+            artnet_snap_count = _artnet_mapping_count;
+            memcpy(artnet_snap, _artnet_mappings, sizeof(ArtNetMapping) * artnet_snap_count);
+        }
+
         // Snapshot all universe data under dmx_mutex
         struct Snapshot { int universe; unsigned char data[513]; };
         std::vector<Snapshot> snapshots;
@@ -293,27 +342,24 @@ public:
             }
         }
 
-        // Snapshot state
-        Protocol current_protocol;
-        std::map<int, int> artnet_ports;
-        {
-            std::lock_guard<std::mutex> lock(state_mutex);
-            current_protocol = _protocol;
-            artnet_ports = _artnet_port_map;
-
-            // Rate limiting: check and update last_send_time atomically
-            auto now = std::chrono::steady_clock::now();
-            auto interval = std::chrono::milliseconds(static_cast<int>(std::round(update_interval_ms)));
-            if (now - last_send_time < interval)
-                return;
-            last_send_time = now;
+        // Debug: print channel values before sending
+        if (_debug) {
+            for (auto& snap : snapshots) {
+                fprintf(stderr, "DMX send: uni=%d ch[1..10]=[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]\n",
+                    snap.universe,
+                    snap.data[1], snap.data[2], snap.data[3], snap.data[4], snap.data[5],
+                    snap.data[6], snap.data[7], snap.data[8], snap.data[9], snap.data[10]);
+            }
         }
+
+        // Serialize protocol I/O — sACN and ArtNet libraries are not thread-safe
+        std::lock_guard<std::mutex> slock(send_mutex);
 
         switch (current_protocol) {
         case Protocol::Serial_Raw:
         case Protocol::Serial: {
             // Serial only sends the active universe
-            int active = _active_universe.load();
+            int active = _active_universe;
             for (auto& snap : snapshots) {
                 if (snap.universe == active) {
                     send_Serial(snap.data, current_protocol);
@@ -350,9 +396,15 @@ public:
         case Protocol::ArtNet: {
             bool any_failed = false;
             for (auto& snap : snapshots) {
-                auto it = artnet_ports.find(snap.universe);
-                if (it == artnet_ports.end()) continue;
-                int res = artnet_send_dmx(artnet_node_obj, it->second, 512, snap.data + 1);
+                int port_idx = -1;
+                for (int i = 0; i < artnet_snap_count; i++) {
+                    if (artnet_snap[i].universe == snap.universe) {
+                        port_idx = artnet_snap[i].port_idx;
+                        break;
+                    }
+                }
+                if (port_idx < 0) continue;
+                int res = artnet_send_dmx(artnet_node_obj, port_idx, 512, snap.data + 1);
                 if (res < 0) any_failed = true;
             }
             if (any_failed) {
@@ -388,6 +440,9 @@ public:
         return false;
     }
 
+    void debug(int enable) { _debug = (enable != 0); }
+    int debug() { return _debug ? 1 : 0; }
+
     std::string port() {
         std::lock_guard<std::mutex> lock(state_mutex);
         return serial_port;
@@ -408,7 +463,7 @@ public:
     }
 
     int universe() {
-        return _active_universe.load();
+        return _active_universe;
     }
     bool universe(int u) {
         if (u < 1 || u > 63999) {
@@ -419,10 +474,15 @@ public:
         {
             std::lock_guard<std::mutex> flock(fade_mutex);
             std::lock_guard<std::mutex> dlock(dmx_mutex);
-            if (_universes.find(u) == _universes.end())
+            if (_universes.find(u) == _universes.end()) {
+                if (static_cast<int>(_universes.size()) >= MAX_UNIVERSES) {
+                    std::cerr << "DMX Warning: Maximum of " << MAX_UNIVERSES << " universes reached." << std::endl;
+                    return false;
+                }
                 _universes[u]; // default construct
+            }
         }
-        _active_universe.store(u);
+        _active_universe = u;
         return true;
     }
 
@@ -435,49 +495,92 @@ public:
             std::lock_guard<std::mutex> flock(fade_mutex);
             std::lock_guard<std::mutex> dlock(dmx_mutex);
             if (_universes.count(uni)) return true; // already exists
+            if (static_cast<int>(_universes.size()) >= MAX_UNIVERSES) {
+                std::cerr << "DMX Warning: Maximum of " << MAX_UNIVERSES << " universes reached." << std::endl;
+                return false;
+            }
             _universes[uni]; // create
         }
         // If sACN is already running, add the universe live
-        std::lock_guard<std::mutex> lock(state_mutex);
-        if (_sacn_initialized) {
-            sacn::Source::UniverseSettings settings{ static_cast<uint16_t>(uni) };
-            settings.priority = static_cast<uint8_t>(_sacn_priority);
-            etcpal::Error err = source.AddUniverse(settings);
-            if (!err.IsOk()) {
-                std::cerr << "DMX Warning: sACN AddUniverse(" << uni << ") failed: " << err.ToString() << std::endl;
-                return false;
+        bool sacn_failed = false;
+        {
+            std::lock_guard<std::mutex> slock(send_mutex);
+            std::lock_guard<std::mutex> lock(state_mutex);
+            if (_sacn_initialized) {
+                sacn::Source::UniverseSettings settings{ static_cast<uint16_t>(uni) };
+                settings.priority = static_cast<uint8_t>(_sacn_priority);
+                etcpal::Error err = source.AddUniverse(settings);
+                if (!err.IsOk()) {
+                    std::cerr << "DMX Warning: sACN AddUniverse(" << uni << ") failed: " << err.ToString() << std::endl;
+                    sacn_failed = true;
+                }
+            }
+            if (_artnet_initialized) {
+                std::cerr << "DMX Warning: ArtNet requires re-initialization to add universes. Call init() again." << std::endl;
             }
         }
-        if (_artnet_initialized) {
-            std::cerr << "DMX Warning: ArtNet requires re-initialization to add universes. Call init() again." << std::endl;
+        // On sACN failure, roll back the map entry (respecting lock ordering)
+        if (sacn_failed) {
+            std::lock_guard<std::mutex> flock(fade_mutex);
+            std::lock_guard<std::mutex> dlock(dmx_mutex);
+            _universes.erase(uni);
+            return false;
         }
         return true;
     }
 
+    // Removes a universe from this DMX instance. Returns true on success.
+    // If the universe does not exist, returns true (no-op).
+    // Cannot remove the last remaining universe.
     bool removeUniverse(int uni) {
         {
             std::lock_guard<std::mutex> flock(fade_mutex);
             std::lock_guard<std::mutex> dlock(dmx_mutex);
             auto it = _universes.find(uni);
-            if (it == _universes.end()) return true; // doesn't exist
+            if (it == _universes.end()) return true; // doesn't exist, no-op
             if (_universes.size() <= 1) {
                 std::cerr << "DMX Warning: Cannot remove the last universe." << std::endl;
                 return false;
             }
             _universes.erase(it);
             // If we removed the active universe, switch to the first remaining
-            if (_active_universe.load() == uni)
-                _active_universe.store(_universes.begin()->first);
+            if (_active_universe == uni)
+                _active_universe = _universes.begin()->first;
         }
         // If protocols are running, remove from live source
+        std::lock_guard<std::mutex> slock(send_mutex);
         std::lock_guard<std::mutex> lock(state_mutex);
         if (_sacn_initialized) {
             source.RemoveUniverse(static_cast<uint16_t>(uni));
         }
         if (_artnet_initialized) {
-            _artnet_port_map.erase(uni);
+            for (int i = 0; i < _artnet_mapping_count; i++) {
+                if (_artnet_mappings[i].universe == uni) {
+                    for (int j = i; j < _artnet_mapping_count - 1; j++)
+                        _artnet_mappings[j] = _artnet_mappings[j + 1];
+                    _artnet_mapping_count--;
+                    break;
+                }
+            }
         }
         return true;
+    }
+
+    int universeCount() {
+        std::lock_guard<std::mutex> lock(dmx_mutex);
+        return static_cast<int>(_universes.size());
+    }
+
+    std::string universes() {
+        std::lock_guard<std::mutex> lock(dmx_mutex);
+        std::string result;
+        bool first = true;
+        for (auto& [uni, udata] : _universes) {
+            if (!first) result += ",";
+            result += std::to_string(uni);
+            first = false;
+        }
+        return result;
     }
 
     int priority() {
@@ -496,9 +599,9 @@ public:
             for (auto& [k, v] : _universes)
                 uni_keys.push_back(k);
         }
+        std::lock_guard<std::mutex> slock(send_mutex);
         std::lock_guard<std::mutex> lock(state_mutex);
-        _sacn_priority = p;
-        // If sACN is already running, update priority on all universes
+        // If sACN is already running, update priority on all universes first
         if (_sacn_initialized) {
             for (int uni : uni_keys) {
                 etcpal::Error err = source.ChangePriority(static_cast<uint16_t>(uni), static_cast<uint8_t>(p));
@@ -509,6 +612,8 @@ public:
                 }
             }
         }
+        // Only update the member after all universes succeeded
+        _sacn_priority = p;
         return true;
     }
 
@@ -517,9 +622,9 @@ public:
         return _source_name;
     }
     bool name(const std::string& n) {
+        std::lock_guard<std::mutex> slock(send_mutex);
         std::lock_guard<std::mutex> lock(state_mutex);
-        _source_name = n;
-        // If sACN is already running, update name live
+        // If sACN is already running, update name live first
         if (_sacn_initialized) {
             etcpal::Error err = source.ChangeName(n);
             if (!err.IsOk()) {
@@ -527,6 +632,8 @@ public:
                 return false;
             }
         }
+        // Only update the member after ChangeName succeeded (or sACN not active)
+        _source_name = n;
         if (_artnet_initialized) {
             std::cerr << "DMX Warning: ArtNet requires re-initialization to change the source name. Call init() again." << std::endl;
         }
@@ -545,7 +652,7 @@ public:
             return;
         }
 
-        int uni = _active_universe.load();
+        int uni = _active_universe;
         std::lock_guard<std::mutex> flock(fade_mutex);
         auto it = _universes.find(uni);
         if (it == _universes.end()) return;
@@ -558,22 +665,39 @@ public:
         f.target_value = static_cast<unsigned char>(target);
         f.start_time = std::chrono::steady_clock::now();
         f.duration = std::chrono::milliseconds(durationMs);
+        if (!f.active) udata.active_fade_count++;
         f.active = true;
     }
 
-    void start() {
-        std::lock_guard<std::mutex> lock(thread_mutex);
-        if (_thread_running.load()) return;
-        _thread_running.store(true);
-        _send_thread = std::thread(&DMX::thread_loop, this);
-    }
+    void fade(int uni, int ch, int target, int durationMs) {
+        if (uni < 1 || uni > 63999) {
+            std::cerr << "DMX Warning: fade() universe " << uni << " out of range (1-63999), ignored." << std::endl;
+            return;
+        }
+        if (ch < 1 || ch > 512) {
+            std::cerr << "DMX Warning: fade() channel " << ch << " out of range (1-512), ignored." << std::endl;
+            return;
+        }
+        target = clamp_dmx(target);
+        if (durationMs <= 0) {
+            channel(uni, ch, target);
+            return;
+        }
 
-    void stop() {
-        std::lock_guard<std::mutex> lock(thread_mutex);
-        if (!_thread_running.load()) return;
-        _thread_running.store(false);
-        if (_send_thread.joinable())
-            _send_thread.join();
+        std::lock_guard<std::mutex> flock(fade_mutex);
+        auto it = _universes.find(uni);
+        if (it == _universes.end()) return;
+        UniverseData& udata = it->second;
+        FadeState& f = udata.fades[ch];
+        {
+            std::lock_guard<std::mutex> dlock(dmx_mutex);
+            f.start_value = udata.dmx_data[ch];
+        }
+        f.target_value = static_cast<unsigned char>(target);
+        f.start_time = std::chrono::steady_clock::now();
+        f.duration = std::chrono::milliseconds(durationMs);
+        if (!f.active) udata.active_fade_count++;
+        f.active = true;
     }
 
 private:
@@ -585,23 +709,25 @@ private:
     // Protected by fade_mutex (fades) and dmx_mutex (dmx_data); map structure
     // modifications require both locks (fade_mutex then dmx_mutex)
     std::map<int, UniverseData> _universes;
-    std::atomic<int> _active_universe{ 1 };
+    int _active_universe{ 1 };
 
     // Lock ordering: fade_mutex -> dmx_mutex -> state_mutex
+    // send_mutex -> state_mutex (serializes protocol I/O; never held with fade/dmx)
     std::mutex dmx_mutex;     // protects dmx_data within _universes
-    std::mutex state_mutex;   // protects protocol, rate, last_send_time, init state, source name
+    std::mutex state_mutex;   // protects protocol, init state, source name
     std::mutex fade_mutex;    // protects fades within _universes
-
-    double update_interval_ms{ 1000.0 / 44.0 }; // default to 44 Hz
-    std::chrono::steady_clock::time_point last_send_time = std::chrono::steady_clock::now();
+    std::mutex send_mutex;    // serializes protocol I/O (sACN/ArtNet are not thread-safe)
 
     // Initialization tracking
     bool _serial_initialized{ false };
     bool _sacn_initialized{ false };
     bool _artnet_initialized{ false };
 
+    // Debug output
+    bool _debug{ false };
+
     // Reconnect backoff tracking
-    std::chrono::steady_clock::time_point last_reconnect_attempt{};
+    int64_t _last_reconnect_ticks{ 0 };
 
     // Serial
     serial::Serial serial_obj;
@@ -613,26 +739,8 @@ private:
 
     // ArtNet
     artnet_node artnet_node_obj = nullptr;
-    std::map<int, int> _artnet_port_map; // universe -> ArtNet port index
-
-    // Background thread
-    std::mutex thread_mutex;
-    std::thread _send_thread;
-    std::atomic<bool> _thread_running{ false };
-
-    void thread_loop() {
-        while (_thread_running.load()) {
-            update_fades();
-            send();
-
-            double interval;
-            {
-                std::lock_guard<std::mutex> lock(state_mutex);
-                interval = update_interval_ms;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(interval)));
-        }
-    }
+    ArtNetMapping _artnet_mappings[ARTNET_MAX_PORTS]{};
+    int _artnet_mapping_count{ 0 };
 
     void update_fades() {
         auto now = std::chrono::steady_clock::now();
@@ -640,6 +748,8 @@ private:
         std::lock_guard<std::mutex> dlock(dmx_mutex);
 
         for (auto& [uni, udata] : _universes) {
+            if (udata.active_fade_count == 0) continue;
+
             for (int ch = 1; ch <= 512; ch++) {
                 FadeState& f = udata.fades[ch];
                 if (!f.active) continue;
@@ -648,10 +758,11 @@ private:
                 if (elapsed >= f.duration) {
                     udata.dmx_data[ch] = f.target_value;
                     f.active = false;
+                    udata.active_fade_count--;
                 } else {
                     double t = static_cast<double>(elapsed.count()) / static_cast<double>(f.duration.count());
-                    udata.dmx_data[ch] = static_cast<unsigned char>(
-                        f.start_value + t * (static_cast<int>(f.target_value) - static_cast<int>(f.start_value)));
+                    int interp = f.start_value + static_cast<int>(t * (static_cast<int>(f.target_value) - static_cast<int>(f.start_value)));
+                    udata.dmx_data[ch] = static_cast<unsigned char>(clamp_dmx(interp));
                 }
             }
         }
@@ -706,7 +817,10 @@ private:
 
     bool init_sACN(const std::vector<int>& uni_keys) {
         try {
-            sacn_global_init();
+            if (!sacn_global_init()) {
+                std::cerr << "DMX Error: sACN library initialization failed." << std::endl;
+                return false;
+            }
 
             etcpal::Uuid cid = etcpal::Uuid::OsPreferred();
             if (cid.IsNull()) {
@@ -757,9 +871,9 @@ private:
             std::cerr << "DMX Error: No universes configured for ArtNet." << std::endl;
             return false;
         }
-        if (uni_keys.size() > 4) {
-            std::cerr << "DMX Warning: ArtNet supports at most 4 ports per node. "
-                      << "Only the first 4 universes will be used." << std::endl;
+        if (uni_keys.size() > ARTNET_MAX_PORTS) {
+            std::cerr << "DMX Warning: ArtNet supports at most " << ARTNET_MAX_PORTS << " ports per node. "
+                      << "Only the first " << ARTNET_MAX_PORTS << " universes will be used." << std::endl;
         }
 
         artnet_node_obj = artnet_new(nullptr, 0);
@@ -773,15 +887,15 @@ private:
         artnet_set_node_type(artnet_node_obj, ARTNET_NODE);
 
         // Use subnet from first universe; all ports share the same subnet
-        uint8_t subnet = (uni_keys[0] >> 4) & 0x0F;
+        uint8_t subnet = ((uni_keys[0] - 1) >> 4) & 0x0F;
         artnet_set_subnet_addr(artnet_node_obj, subnet);
 
-        _artnet_port_map.clear();
+        _artnet_mapping_count = 0;
         int port_idx = 0;
         for (int uni : uni_keys) {
-            if (port_idx >= 4) break;
+            if (port_idx >= ARTNET_MAX_PORTS) break;
 
-            uint8_t uni_subnet = (uni >> 4) & 0x0F;
+            uint8_t uni_subnet = ((uni - 1) >> 4) & 0x0F;
             if (uni_subnet != subnet) {
                 std::cerr << "DMX Warning: ArtNet universe " << uni
                           << " is in a different subnet, skipped. "
@@ -789,17 +903,19 @@ private:
                 continue;
             }
 
-            uint8_t uni_addr = uni & 0x0F;
+            uint8_t uni_addr = (uni - 1) & 0x0F;
             artnet_set_port_type(artnet_node_obj, port_idx, ARTNET_ENABLE_INPUT, ARTNET_PORT_DMX);
             artnet_set_port_addr(artnet_node_obj, port_idx, ARTNET_INPUT_PORT, uni_addr);
-            _artnet_port_map[uni] = port_idx;
+            _artnet_mappings[_artnet_mapping_count].universe = uni;
+            _artnet_mappings[_artnet_mapping_count].port_idx = port_idx;
+            _artnet_mapping_count++;
             port_idx++;
         }
 
         if (artnet_start(artnet_node_obj) < 0) {
             artnet_destroy(artnet_node_obj);
             artnet_node_obj = nullptr;
-            _artnet_port_map.clear();
+            _artnet_mapping_count = 0;
             std::cerr << "DMX Error: Failed to start libartnet node." << std::endl;
             return false;
         }
@@ -814,19 +930,12 @@ private:
             artnet_destroy(artnet_node_obj);
             artnet_node_obj = nullptr;
         }
-        _artnet_port_map.clear();
+        _artnet_mapping_count = 0;
         _artnet_initialized = false;
     }
 
     // Deinit all protocols (called under state_mutex)
-    void deinit_all_unlocked() {
-        deinit_Serial();
-        deinit_sACN();
-        deinit_ArtNet();
-    }
-
-    // Deinit only the currently-active protocol
-    void deinit_current() {
+    void deinit_all() {
         deinit_Serial();
         deinit_sACN();
         deinit_ArtNet();
@@ -834,9 +943,12 @@ private:
 
     bool can_attempt_reconnect() {
         auto now = std::chrono::steady_clock::now();
-        if (now - last_reconnect_attempt < std::chrono::milliseconds(RECONNECT_COOLDOWN_MS))
+        int64_t now_ticks = now.time_since_epoch().count();
+        auto elapsed = std::chrono::steady_clock::duration(now_ticks - _last_reconnect_ticks);
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+        if (elapsed_ms.count() < RECONNECT_COOLDOWN_MS)
             return false;
-        last_reconnect_attempt = now;
+        _last_reconnect_ticks = now_ticks;
         return true;
     }
 
@@ -934,6 +1046,15 @@ CK_DLL_MFUN(dmx_channel) {
     t_CKINT value = GET_NEXT_INT(ARGS);
     dmx_obj->channel(static_cast<int>(ch), static_cast<int>(value));
 }
+CK_DLL_MFUN(dmx_channel_uni) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) return;
+
+    t_CKINT uni = GET_NEXT_INT(ARGS);
+    t_CKINT ch = GET_NEXT_INT(ARGS);
+    t_CKINT value = GET_NEXT_INT(ARGS);
+    dmx_obj->channel(static_cast<int>(uni), static_cast<int>(ch), static_cast<int>(value));
+}
 CK_DLL_MFUN(dmx_channels) {
     DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
     if (!dmx_obj) return;
@@ -952,20 +1073,6 @@ CK_DLL_MFUN(dmx_channels) {
     }
 
     dmx_obj->channels(static_cast<int>(startCh), values, static_cast<int>(count));
-}
-
-CK_DLL_MFUN(dmx_get_rate) {
-    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
-    if (!dmx_obj) { RETURN->v_int = -1; return; }
-    RETURN->v_int = dmx_obj->rate();
-}
-CK_DLL_MFUN(dmx_rate) {
-    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
-    t_CKINT hz = GET_NEXT_INT(ARGS);
-    if (!dmx_obj) { RETURN->v_int = hz; return; }
-
-    dmx_obj->rate(static_cast<int>(hz));
-    RETURN->v_int = hz;
 }
 
 CK_DLL_MFUN(dmx_init) {
@@ -993,6 +1100,14 @@ CK_DLL_MFUN(dmx_connected) {
     DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
     if (!dmx_obj) { RETURN->v_int = 0; return; }
     RETURN->v_int = dmx_obj->connected() ? 1 : 0;
+}
+
+CK_DLL_MFUN(dmx_debug) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) { RETURN->v_int = 0; return; }
+    t_CKINT enable = GET_NEXT_INT(ARGS);
+    dmx_obj->debug(static_cast<int>(enable));
+    RETURN->v_int = enable;
 }
 
 // Serial
@@ -1047,6 +1162,19 @@ CK_DLL_MFUN(dmx_remove_universe) {
     RETURN->v_int = dmx_obj->removeUniverse(static_cast<int>(uni)) ? 1 : 0;
 }
 
+CK_DLL_MFUN(dmx_universe_count) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) { RETURN->v_int = 0; return; }
+    RETURN->v_int = dmx_obj->universeCount();
+}
+
+CK_DLL_MFUN(dmx_universes) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) { RETURN->v_string = API->object->create_string(VM, "", 0); return; }
+    const std::string& u = dmx_obj->universes();
+    RETURN->v_string = API->object->create_string(VM, u.c_str(), (t_CKUINT)u.length());
+}
+
 // sACN priority
 
 CK_DLL_MFUN(dmx_get_priority) {
@@ -1080,20 +1208,6 @@ CK_DLL_MFUN(dmx_name) {
     RETURN->v_string = API->object->create_string(VM, n.c_str(), (t_CKUINT)n.length());
 }
 
-// Background thread
-
-CK_DLL_MFUN(dmx_start) {
-    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
-    if (!dmx_obj) return;
-    dmx_obj->start();
-}
-
-CK_DLL_MFUN(dmx_stop) {
-    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
-    if (!dmx_obj) return;
-    dmx_obj->stop();
-}
-
 // Fade
 
 CK_DLL_MFUN(dmx_fade) {
@@ -1104,6 +1218,17 @@ CK_DLL_MFUN(dmx_fade) {
     t_CKINT target = GET_NEXT_INT(ARGS);
     t_CKINT durationMs = GET_NEXT_INT(ARGS);
     dmx_obj->fade(static_cast<int>(ch), static_cast<int>(target), static_cast<int>(durationMs));
+}
+
+CK_DLL_MFUN(dmx_fade_uni) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    if (!dmx_obj) return;
+
+    t_CKINT uni = GET_NEXT_INT(ARGS);
+    t_CKINT ch = GET_NEXT_INT(ARGS);
+    t_CKINT target = GET_NEXT_INT(ARGS);
+    t_CKINT durationMs = GET_NEXT_INT(ARGS);
+    dmx_obj->fade(static_cast<int>(uni), static_cast<int>(ch), static_cast<int>(target), static_cast<int>(durationMs));
 }
 
 CK_DLL_INFO(DMX)
@@ -1124,13 +1249,12 @@ CK_DLL_QUERY(DMX) {
 
     QUERY->begin_class(QUERY, "DMX", "Object");
     QUERY->doc_class(QUERY,
-        "The DMX class provides control over DMX512 lighting data and protocol selection for ChucK. "
-        "It supports sending DMX using Serial (including Enttec-style USB and OpenDMX), sACN (E1.31), "
-        "and Art-Net output, with runtime selection of protocol, port, universe, and refresh rate. "
-        "Configure protocol, port/universe, and rate, then call init() to instantiate the connection. "
-        "Use start() to enable a background send thread with automatic fade interpolation. "
-        "Multiple universes are supported: use addUniverse() to add universes, and universe() to "
-        "select the active universe for channel and fade operations."
+        "The DMX class provides control over DMX512 lighting data for ChucK. "
+        "It supports Serial (including Enttec-style USB and OpenDMX), sACN (E1.31), "
+        "and Art-Net output. Configure protocol, port/universe, then call init(). "
+        "Use channel()/channels() to buffer values, then send() to transmit. "
+        "Fades are advanced automatically each time send() is called. "
+        "Multiple universes are supported via addUniverse() and universe()."
     );
 
     QUERY->add_ctor(QUERY, dmx_ctor);
@@ -1183,6 +1307,16 @@ CK_DLL_QUERY(DMX) {
         "Changes are staged in the buffer and take effect upon next send()."
     );
 
+    QUERY->add_mfun(QUERY, dmx_channel_uni, "void", "channel");
+    QUERY->add_arg(QUERY, "int", "universe");
+    QUERY->add_arg(QUERY, "int", "channel");
+    QUERY->add_arg(QUERY, "int", "value");
+    QUERY->doc_func(QUERY,
+        "Set a DMX channel (1-512) to a value (0-255) on a specific universe. "
+        "Values outside 0-255 are clamped. Cancels any active fade on this channel. "
+        "The universe must already exist (via addUniverse() or universe())."
+    );
+
     QUERY->add_mfun(QUERY, dmx_channels, "void", "channels");
     QUERY->add_arg(QUERY, "int", "startChannel");
     QUERY->add_arg(QUERY, "int[]", "values");
@@ -1192,20 +1326,6 @@ CK_DLL_QUERY(DMX) {
         "All channels are updated atomically under a single lock."
     );
 
-    // --- Rate ---
-
-    QUERY->add_mfun(QUERY, dmx_get_rate, "int", "rate");
-    QUERY->doc_func(QUERY,
-        "Get the current DMX update rate in Hz (frames per second)."
-    );
-
-    QUERY->add_mfun(QUERY, dmx_rate, "int", "rate");
-    QUERY->add_arg(QUERY, "int", "rate");
-    QUERY->doc_func(QUERY,
-        "Set the DMX update rate (Hz). Acceptable range is 1-44 Hz. "
-        "This controls the minimum interval between consecutive sends."
-    );
-
     // --- Init / Send / Lifecycle ---
 
     QUERY->add_mfun(QUERY, dmx_init, "int", "init");
@@ -1213,15 +1333,16 @@ CK_DLL_QUERY(DMX) {
         "Initialize the DMX connection using the configured protocol, port, universe(s), "
         "priority, and source name. All configured universes are initialized. "
         "Returns 1 on success, 0 on failure. "
+        "Calling init() again deinitializes the previous protocol first. "
         "Call this after adjusting configuration parameters."
     );
 
     QUERY->add_mfun(QUERY, dmx_send, "void", "send");
     QUERY->doc_func(QUERY,
-        "Transmit the current DMX buffer for all configured universes over the active protocol. "
-        "For Serial, only the active universe is sent. "
-        "Enforces the minimum interval set by rate(). "
-        "Not needed if start() is used for background sending."
+        "Advance any active fades, then transmit the current DMX buffer for all configured "
+        "universes over the active protocol. For Serial, only the active universe is sent. "
+        "This is the only method that sends data — call it explicitly after buffering changes. "
+        "For fades, call send() periodically (e.g., every 23ms) to drive the interpolation."
     );
 
     QUERY->add_mfun(QUERY, dmx_blackout, "void", "blackout");
@@ -1235,17 +1356,10 @@ CK_DLL_QUERY(DMX) {
         "Returns 1 if the current protocol is initialized and ready to send, 0 otherwise."
     );
 
-    // --- Background Thread ---
-
-    QUERY->add_mfun(QUERY, dmx_start, "void", "start");
+    QUERY->add_mfun(QUERY, dmx_debug, "int", "debug");
+    QUERY->add_arg(QUERY, "int", "enable");
     QUERY->doc_func(QUERY,
-        "Start a background thread that automatically sends DMX at the configured rate. "
-        "Also processes fade() transitions. Call after init()."
-    );
-
-    QUERY->add_mfun(QUERY, dmx_stop, "void", "stop");
-    QUERY->doc_func(QUERY,
-        "Stop the background send thread. The thread is also stopped automatically on destruction."
+        "Enable (1) or disable (0) debug output to stderr showing channel values on each send()."
     );
 
     // --- Fade ---
@@ -1256,10 +1370,21 @@ CK_DLL_QUERY(DMX) {
     QUERY->add_arg(QUERY, "int", "durationMs");
     QUERY->doc_func(QUERY,
         "Fade a DMX channel (1-512) to a target value (0-255) over durationMs milliseconds "
-        "on the active universe. "
-        "Requires start() for the background thread to process fades. "
+        "on the active universe. Fades advance each time send() is called. "
         "If durationMs <= 0, the value is set immediately. "
         "Setting a channel directly via channel() cancels any active fade on that channel."
+    );
+
+    QUERY->add_mfun(QUERY, dmx_fade_uni, "void", "fade");
+    QUERY->add_arg(QUERY, "int", "universe");
+    QUERY->add_arg(QUERY, "int", "channel");
+    QUERY->add_arg(QUERY, "int", "target");
+    QUERY->add_arg(QUERY, "int", "durationMs");
+    QUERY->doc_func(QUERY,
+        "Fade a DMX channel (1-512) to a target value (0-255) over durationMs milliseconds "
+        "on a specific universe. Fades advance each time send() is called. "
+        "If durationMs <= 0, the value is set immediately. "
+        "The universe must already exist (via addUniverse() or universe())."
     );
 
     // --- Serial ---
@@ -1293,7 +1418,7 @@ CK_DLL_QUERY(DMX) {
     QUERY->add_arg(QUERY, "int", "universe");
     QUERY->doc_func(QUERY,
         "Set the active DMX universe (1-63999). Channel and fade operations target this universe. "
-        "If the universe does not exist yet, it is automatically created. "
+        "If the universe does not exist yet, it is automatically created (up to 64 universes). "
         "Use addUniverse() to add universes without switching."
     );
 
@@ -1301,7 +1426,7 @@ CK_DLL_QUERY(DMX) {
     QUERY->add_arg(QUERY, "int", "universe");
     QUERY->doc_func(QUERY,
         "Add a universe (1-63999) to this DMX instance without switching the active universe. "
-        "Returns 1 on success, 0 on failure. "
+        "Returns 1 on success, 0 on failure. Maximum 64 universes per instance. "
         "If sACN is already initialized, the universe is added live. "
         "ArtNet requires re-initialization via init() to add universes."
     );
@@ -1311,8 +1436,20 @@ CK_DLL_QUERY(DMX) {
     QUERY->doc_func(QUERY,
         "Remove a universe from this DMX instance. Returns 1 on success, 0 on failure. "
         "Cannot remove the last remaining universe. "
+        "If the universe does not exist, returns 1 (no-op). "
         "If the removed universe was the active one, the active universe switches to "
         "the lowest remaining universe."
+    );
+
+    QUERY->add_mfun(QUERY, dmx_universe_count, "int", "universeCount");
+    QUERY->doc_func(QUERY,
+        "Returns the number of currently configured universes."
+    );
+
+    QUERY->add_mfun(QUERY, dmx_universes, "string", "universes");
+    QUERY->doc_func(QUERY,
+        "Returns a comma-separated string of configured universe numbers "
+        "(e.g., '1,2,5'). Universes are listed in ascending order."
     );
 
     QUERY->add_mfun(QUERY, dmx_get_priority, "int", "priority");
