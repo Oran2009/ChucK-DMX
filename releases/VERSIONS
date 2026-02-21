@@ -1,0 +1,45 @@
+------------------
+ChucK-DMX VERSIONS log
+------------------
+
+0.2.0 (February 2026)
+=======
+(BREAKING) removed rate(). send() no longer rate-limits internally.
+(added) fade(ch, target, durationMs) for smooth channel transitions;
+    call send() periodically (e.g., every 23ms) to animate fades
+(added) fade(universe, ch, target, durationMs) to fade on a specific
+    universe without switching the active universe
+(added) channels(startCh, values[]) for batch-setting consecutive channels
+(added) channel(ch) getter returning the current value (0-255)
+(added) channel(universe, ch, value) to set a channel on a specific
+    universe without switching the active universe
+(added) connected() to check if the protocol is initialized and ready
+(added) DMX.ports() static method to list available serial ports
+(added) priority(p) getter/setter for sACN priority (0-200, default 100);
+    can be changed live after init
+(added) blackout() to zero all channels and cancel all fades
+(added) static protocol constants: DMX.SERIAL_RAW, DMX.SERIAL, DMX.SACN,
+    DMX.ARTNET
+(added) multi-universe support: addUniverse(uni), removeUniverse(uni),
+    universeCount(), and universes()
+(added) universe() setter auto-creates universe data on first use
+(added) name(string) getter/setter for sACN source name and ArtNet node
+    name (default: 'ChucK DMX')
+(added) debug(enable) to print channel values to stderr on each send()
+(updated) init() returns 1 on success, 0 on failure
+(updated) channel values clamped to 0-255 with a warning
+(updated) setters return their value for ChucK chaining
+    (e.g., DMX.SACN => dmx.protocol)
+(updated) send() transmits all configured universes for sACN/ArtNet;
+    Serial sends only the active universe
+(fixed) various race conditions and threading issues
+(fixed) ArtNet universe mapping (universe 1 now correctly maps to
+    ArtNet address 0:0:0)
+(fixed) Windows serial timing for DMX break signal
+(fixed) sACN receivers losing connection between sends
+(fixed) multiple DMX instances could interfere with each other's sACN
+    initialization
+
+0.1.0
+=======
+Initial Release

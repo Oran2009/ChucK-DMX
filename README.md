@@ -1,8 +1,10 @@
 <h2>ChucK-DMX: A DMX ChuGin for ChucK.</h2>
 
-**ChucK-DMX (v0.1.0)** — [**ChucK-DMX API Reference**](https://ccrma.stanford.edu/~hoangben/ChucK-DMX/api/)
+**ChucK-DMX (v0.2.0)** — [**ChucK-DMX API Reference**](https://ccrma.stanford.edu/~hoangben/ChucK-DMX/api/)
 • [**Examples**](https://ccrma.stanford.edu/~hoangben/ChucK-DMX/examples/)
 • [**Changelog**](https://ccrma.stanford.edu/~hoangben/ChucK-DMX/releases/VERSIONS)
+
+A plugin for ChucK that enables the sending of DMX over serial or over ethernet via the ArtNet and sACN network protocols.
 
 ## Installing ChucK-DMX
 

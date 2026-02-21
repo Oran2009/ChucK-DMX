@@ -29,6 +29,7 @@ install_manifest.txt
 mono_crash.*
 
 # Build results
+x64/
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
@@ -437,3 +438,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+.claude/
+nul
