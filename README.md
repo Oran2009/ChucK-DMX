@@ -1,6 +1,6 @@
 <h2>ChucK-DMX: A DMX ChuGin for ChucK.</h2>
 
-**ChucK-DMX (v0.1.1)** — [**ChucK-DMX API Reference**](https://ccrma.stanford.edu/~hoangben/ChucK-DMX/api/)
+**ChucK-DMX (v0.2.0)** — [**ChucK-DMX API Reference**](https://ccrma.stanford.edu/~hoangben/ChucK-DMX/api/)
 • [**Examples**](https://ccrma.stanford.edu/~hoangben/ChucK-DMX/examples/)
 • [**Changelog**](https://ccrma.stanford.edu/~hoangben/ChucK-DMX/releases/VERSIONS)
 

@@ -2,7 +2,7 @@
 ChucK-DMX VERSIONS log
 ------------------
 
-0.1.1 (February 2026)
+0.2.0 (February 2026)
 =======
 (BREAKING) removed rate(). send() no longer rate-limits internally.
 (added) fade(ch, target, durationMs) for smooth channel transitions;
