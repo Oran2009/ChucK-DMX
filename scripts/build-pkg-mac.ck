@@ -1,6 +1,6 @@
 @import "Chumpinate"
 
-"0.1.0" => string version;
+"0.2.0" => string version;
 
 // instantiate a Chumpinate package
 Package pkg("DMX");
