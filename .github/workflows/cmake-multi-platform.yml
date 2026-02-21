@@ -63,7 +63,7 @@ jobs:
         shell: bash
 
       - name: Upload DMX.chug artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.chug_path }}
@@ -76,19 +76,19 @@ jobs:
   
       # Download each platform artifact
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: DMX-windows-latest
           path: artifacts/Windows
   
       - name: Download Linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: DMX-ubuntu-latest
           path: artifacts/Linux
   
       - name: Download macOS artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: DMX-macos-latest
           path: artifacts/macOS
@@ -130,7 +130,7 @@ jobs:
   
       # Upload combined package artifact
       - name: Upload combined package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: DMX-Packages-All
           path: |
