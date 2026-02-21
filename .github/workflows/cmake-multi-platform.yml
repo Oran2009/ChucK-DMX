@@ -128,13 +128,11 @@ jobs:
       - name: Run Chumpinate macOS script
         run: chuck scripts/build-pkg-mac.ck
   
-      # Create zip archive of packages and releases
-      - name: Create release archive
-        run: zip -r DMX-Packages-All.zip package releases
-
       # Upload combined package artifact
       - name: Upload combined package artifact
         uses: actions/upload-artifact@v6.0.0
         with:
           name: DMX-Packages-All
-          path: DMX-Packages-All.zip
+          path: |
+            package
+            releases
