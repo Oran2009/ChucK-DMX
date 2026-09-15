@@ -21,7 +21,6 @@ jobs:
             chug_path: build/DMX.chug
             artifact_name: DMX-ubuntu-latest
           - os: windows-latest
-            generator: "Visual Studio 17 2022"
             config: Release
             build_dir: build
             chug_path: build/Release/DMX.chug
@@ -50,7 +49,8 @@ jobs:
       - name: Configure CMake
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -A x64 -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=windows -DETCPAL_NET_TARGET=windows
+            # No -G: let CMake pick whichever Visual Studio the runner image ships.
+            cmake -S . -B ${{ matrix.build_dir }} -A x64 -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=windows -DETCPAL_NET_TARGET=windows
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
             cmake -S . -B ${{ matrix.build_dir }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.config }} -DETCPAL_OS_TARGET=macos -DETCPAL_NET_TARGET=macos
           else
