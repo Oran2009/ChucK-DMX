@@ -63,6 +63,8 @@ CK_DLL_MFUN(dmx_debug);
 CK_DLL_MFUN(dmx_get_port);
 CK_DLL_MFUN(dmx_port);
 CK_DLL_SFUN(dmx_list_ports);
+CK_DLL_MFUN(dmx_set_rts);
+CK_DLL_MFUN(dmx_set_dtr);
 
 // sACN and ArtNet
 CK_DLL_MFUN(dmx_get_universe);
@@ -460,6 +462,22 @@ public:
             result += ports[i].port;
         }
         return result;
+    }
+
+    void setRTS(bool level) {
+        if (!serial_obj.isOpen()) {
+            std::cerr << "DMX Error: Serial not initialized. Call init() before setRTS()." << std::endl;
+        }
+
+        serial_obj.setRTS(level);
+    }
+
+    void setDTR(bool level) {
+        if (!serial_obj.isOpen()) {
+            std::cerr << "DMX Error: Serial not initialized. Call init() before setDTR()." << std::endl;
+        }
+
+        serial_obj.setDTR(level);
     }
 
     int universe() {
@@ -1132,6 +1150,20 @@ CK_DLL_SFUN(dmx_list_ports) {
     RETURN->v_string = API->object->create_string(VM, p.c_str(), (t_CKUINT)p.length());
 }
 
+CK_DLL_MFUN(dmx_set_rts) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    t_CKINT level = GET_NEXT_INT(ARGS);
+    dmx_obj->setRTS(static_cast<bool>(level));
+    RETURN->v_int = level;
+}
+
+CK_DLL_MFUN(dmx_set_dtr) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    t_CKINT level = GET_NEXT_INT(ARGS);
+    dmx_obj->setDTR(static_cast<bool>(level));
+    RETURN->v_int = level;
+}
+
 // sACN and ArtNet
 
 CK_DLL_MFUN(dmx_get_universe) {
@@ -1405,6 +1437,24 @@ CK_DLL_QUERY(DMX) {
     QUERY->doc_func(QUERY,
         "Returns a comma-separated string of available serial port names (e.g., 'COM3,COM5'). "
         "Use this to discover connected DMX interfaces."
+    );
+
+    QUERY->add_mfun(QUERY, dmx_set_rts, "int", "rts");
+    QUERY->add_arg(QUERY, "int", "level");
+    QUERY->doc_func(QUERY,
+        "Set the RTS handshaking line to the given level. "
+        "For serial connections, this may need to be set to false for certain USB interface that use SERIAL_RAW protocol. "
+        "Configure this after init(). "
+        "Defaults to true."
+    );
+
+    QUERY->add_mfun(QUERY, dmx_set_dtr, "int", "dtr");
+    QUERY->add_arg(QUERY, "int", "level");
+    QUERY->doc_func(QUERY,
+        "Set the DTR handshaking line to the given level. "
+        "For serial connections, this may need to be set to false for certain USB interface that use SERIAL_RAW protocol. "
+        "Configure this after init(). "
+        "Defaults to true."
     );
 
     // --- sACN and ArtNet ---
