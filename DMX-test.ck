@@ -5,6 +5,8 @@
 // `chuck --chugin:build/Release/DMX.chug DMX-test.ck`
 //--------------------------------------------------------------------
 
+@import "DMX"
+
 8 => int NUM;
 5 => int CH;
 
