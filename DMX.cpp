@@ -1254,7 +1254,7 @@ CK_DLL_MFUN(dmx_fade_uni) {
 
 CK_DLL_INFO(DMX)
 {
-    QUERY->setinfo(QUERY, CHUGIN_INFO_CHUGIN_VERSION, "v0.2.0");
+    QUERY->setinfo(QUERY, CHUGIN_INFO_CHUGIN_VERSION, "v0.3.0");
     QUERY->setinfo(QUERY, CHUGIN_INFO_AUTHORS, "Ben Hoang");
     QUERY->setinfo(QUERY, CHUGIN_INFO_DESCRIPTION,
         "ChucK-DMX: A plugin for ChucK that enables the sending of DMX "

@@ -2,6 +2,14 @@
 ChucK-DMX VERSIONS log
 ------------------
 
+0.3.0 (September 2026)
+=======
+(added) rts(level) to set the RTS handshaking line on serial connections
+(added) dtr(level) to set the DTR handshaking line on serial connections;
+    RTS/DTR default to high and are reapplied when the port is reopened
+(fixed) rts()/dtr() now hold the serial mutex, so they can't race with
+    send() or init()
+
 0.2.0 (February 2026)
 =======
 (BREAKING) removed rate(). send() no longer rate-limits internally.
