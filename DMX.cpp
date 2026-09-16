@@ -23,8 +23,6 @@ extern "C" {
 #ifdef _WIN32
 #include <windows.h>
 static void dmx_usleep(unsigned int us) {
-    // Sleep() has millisecond granularity; for sub-ms DMX break timing
-    // we need a busy-wait loop using QueryPerformanceCounter
     if (us == 0) return;
     LARGE_INTEGER freq, start, now;
     QueryPerformanceFrequency(&freq);
@@ -63,6 +61,8 @@ CK_DLL_MFUN(dmx_debug);
 CK_DLL_MFUN(dmx_get_port);
 CK_DLL_MFUN(dmx_port);
 CK_DLL_SFUN(dmx_list_ports);
+CK_DLL_MFUN(dmx_set_rts);
+CK_DLL_MFUN(dmx_set_dtr);
 
 // sACN and ArtNet
 CK_DLL_MFUN(dmx_get_universe);
@@ -79,7 +79,6 @@ CK_DLL_MFUN(dmx_priority);
 // source name
 CK_DLL_MFUN(dmx_get_name);
 CK_DLL_MFUN(dmx_name);
-
 
 // fade
 CK_DLL_MFUN(dmx_fade);
@@ -283,7 +282,6 @@ public:
     }
 
     bool init() {
-        // Snapshot universe keys under dmx_mutex (before acquiring state_mutex)
         std::vector<int> uni_keys;
         {
             std::lock_guard<std::mutex> lock(dmx_mutex);
@@ -315,10 +313,8 @@ public:
     }
 
     void send() {
-        // Advance any active fades based on elapsed wall-clock time
         update_fades();
 
-        // State snapshot under state_mutex (before data snapshot)
         Protocol current_protocol;
         ArtNetMapping artnet_snap[ARTNET_MAX_PORTS];
         int artnet_snap_count;
@@ -329,7 +325,6 @@ public:
             memcpy(artnet_snap, _artnet_mappings, sizeof(ArtNetMapping) * artnet_snap_count);
         }
 
-        // Snapshot all universe data under dmx_mutex
         struct Snapshot { int universe; unsigned char data[513]; };
         std::vector<Snapshot> snapshots;
         {
@@ -352,13 +347,11 @@ public:
             }
         }
 
-        // Serialize protocol I/O — sACN and ArtNet libraries are not thread-safe
         std::lock_guard<std::mutex> slock(send_mutex);
 
         switch (current_protocol) {
         case Protocol::Serial_Raw:
         case Protocol::Serial: {
-            // Serial only sends the active universe
             int active = _active_universe;
             for (auto& snap : snapshots) {
                 if (snap.universe == active) {
@@ -462,6 +455,30 @@ public:
         return result;
     }
 
+    void setRTS(bool level) {
+        std::lock_guard<std::mutex> lock(serial_mutex);
+        _rts = level;
+        try {
+            if (serial_obj.isOpen())
+                serial_obj.setRTS(level);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "DMX Error: Failed to set RTS: " << e.what() << std::endl;
+        }
+    }
+
+    void setDTR(bool level) {
+        std::lock_guard<std::mutex> lock(serial_mutex);
+        _dtr = level;
+        try {
+            if (serial_obj.isOpen())
+                serial_obj.setDTR(level);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "DMX Error: Failed to set DTR: " << e.what() << std::endl;
+        }
+    }
+
     int universe() {
         return _active_universe;
     }
@@ -470,7 +487,6 @@ public:
             std::cerr << "DMX Warning: universe() must be 1-63999, got " << u << "." << std::endl;
             return false;
         }
-        // Auto-create universe data if it doesn't exist
         {
             std::lock_guard<std::mutex> flock(fade_mutex);
             std::lock_guard<std::mutex> dlock(dmx_mutex);
@@ -501,7 +517,6 @@ public:
             }
             _universes[uni]; // create
         }
-        // If sACN is already running, add the universe live
         bool sacn_failed = false;
         {
             std::lock_guard<std::mutex> slock(send_mutex);
@@ -519,7 +534,6 @@ public:
                 std::cerr << "DMX Warning: ArtNet requires re-initialization to add universes. Call init() again." << std::endl;
             }
         }
-        // On sACN failure, roll back the map entry (respecting lock ordering)
         if (sacn_failed) {
             std::lock_guard<std::mutex> flock(fade_mutex);
             std::lock_guard<std::mutex> dlock(dmx_mutex);
@@ -531,7 +545,6 @@ public:
 
     // Removes a universe from this DMX instance. Returns true on success.
     // If the universe does not exist, returns true (no-op).
-    // Cannot remove the last remaining universe.
     bool removeUniverse(int uni) {
         {
             std::lock_guard<std::mutex> flock(fade_mutex);
@@ -543,11 +556,9 @@ public:
                 return false;
             }
             _universes.erase(it);
-            // If we removed the active universe, switch to the first remaining
             if (_active_universe == uni)
                 _active_universe = _universes.begin()->first;
         }
-        // If protocols are running, remove from live source
         std::lock_guard<std::mutex> slock(send_mutex);
         std::lock_guard<std::mutex> lock(state_mutex);
         if (_sacn_initialized) {
@@ -592,7 +603,6 @@ public:
             std::cerr << "DMX Warning: priority() must be 0-200, got " << p << "." << std::endl;
             return false;
         }
-        // Get universe keys before acquiring state_mutex (lock ordering)
         std::vector<int> uni_keys;
         {
             std::lock_guard<std::mutex> lock(dmx_mutex);
@@ -601,7 +611,6 @@ public:
         }
         std::lock_guard<std::mutex> slock(send_mutex);
         std::lock_guard<std::mutex> lock(state_mutex);
-        // If sACN is already running, update priority on all universes first
         if (_sacn_initialized) {
             for (int uni : uni_keys) {
                 etcpal::Error err = source.ChangePriority(static_cast<uint16_t>(uni), static_cast<uint8_t>(p));
@@ -612,7 +621,6 @@ public:
                 }
             }
         }
-        // Only update the member after all universes succeeded
         _sacn_priority = p;
         return true;
     }
@@ -624,7 +632,6 @@ public:
     bool name(const std::string& n) {
         std::lock_guard<std::mutex> slock(send_mutex);
         std::lock_guard<std::mutex> lock(state_mutex);
-        // If sACN is already running, update name live first
         if (_sacn_initialized) {
             etcpal::Error err = source.ChangeName(n);
             if (!err.IsOk()) {
@@ -632,7 +639,6 @@ public:
                 return false;
             }
         }
-        // Only update the member after ChangeName succeeded (or sACN not active)
         _source_name = n;
         if (_artnet_initialized) {
             std::cerr << "DMX Warning: ArtNet requires re-initialization to change the source name. Call init() again." << std::endl;
@@ -705,9 +711,6 @@ private:
     std::string _source_name{ "ChucK DMX" };
     int _sacn_priority{ 100 };
 
-    // Multi-universe data: maps universe number -> per-universe DMX + fade state
-    // Protected by fade_mutex (fades) and dmx_mutex (dmx_data); map structure
-    // modifications require both locks (fade_mutex then dmx_mutex)
     std::map<int, UniverseData> _universes;
     int _active_universe{ 1 };
 
@@ -732,7 +735,9 @@ private:
     // Serial
     serial::Serial serial_obj;
     std::string serial_port;
-    std::mutex serial_mutex; // protects serial_obj
+    std::mutex serial_mutex; // protects serial_obj, _rts, _dtr
+    bool _rts{ true };
+    bool _dtr{ true };
 
     // sACN
     sacn::Source source;
@@ -781,6 +786,8 @@ private:
         serial::Timeout timeout = serial::Timeout::simpleTimeout(1000);
         serial_obj.setTimeout(timeout);
         serial_obj.open();
+        serial_obj.setRTS(_rts);
+        serial_obj.setDTR(_dtr);
     }
 
     void closePort() {
@@ -1132,6 +1139,20 @@ CK_DLL_SFUN(dmx_list_ports) {
     RETURN->v_string = API->object->create_string(VM, p.c_str(), (t_CKUINT)p.length());
 }
 
+CK_DLL_MFUN(dmx_set_rts) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    t_CKINT level = GET_NEXT_INT(ARGS);
+    dmx_obj->setRTS(static_cast<bool>(level));
+    RETURN->v_int = level;
+}
+
+CK_DLL_MFUN(dmx_set_dtr) {
+    DMX* dmx_obj = (DMX*)OBJ_MEMBER_INT(SELF, dmx_data_offset);
+    t_CKINT level = GET_NEXT_INT(ARGS);
+    dmx_obj->setDTR(static_cast<bool>(level));
+    RETURN->v_int = level;
+}
+
 // sACN and ArtNet
 
 CK_DLL_MFUN(dmx_get_universe) {
@@ -1405,6 +1426,24 @@ CK_DLL_QUERY(DMX) {
     QUERY->doc_func(QUERY,
         "Returns a comma-separated string of available serial port names (e.g., 'COM3,COM5'). "
         "Use this to discover connected DMX interfaces."
+    );
+
+    QUERY->add_mfun(QUERY, dmx_set_rts, "int", "rts");
+    QUERY->add_arg(QUERY, "int", "level");
+    QUERY->doc_func(QUERY,
+        "Set the RTS handshaking line to the given level. "
+        "For serial connections, this may need to be set to false for certain USB interface that use SERIAL_RAW protocol. "
+        "Can be called before or after init(); the level is reapplied whenever the port opens. "
+        "Defaults to true."
+    );
+
+    QUERY->add_mfun(QUERY, dmx_set_dtr, "int", "dtr");
+    QUERY->add_arg(QUERY, "int", "level");
+    QUERY->doc_func(QUERY,
+        "Set the DTR handshaking line to the given level. "
+        "For serial connections, this may need to be set to false for certain USB interface that use SERIAL_RAW protocol. "
+        "Can be called before or after init(); the level is reapplied whenever the port opens. "
+        "Defaults to true."
     );
 
     // --- sACN and ArtNet ---
