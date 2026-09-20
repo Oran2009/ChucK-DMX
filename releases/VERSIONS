@@ -7,6 +7,7 @@ ChucK-DMX VERSIONS log
 (added) rts(level) to set the RTS handshaking line on serial connections
 (added) dtr(level) to set the DTR handshaking line on serial connections;
     RTS/DTR default to high and are reapplied when the port is reopened
+    (RTS/DTR support contributed by Gregg Oliva, @gloliva)
 (fixed) rts()/dtr() now hold the serial mutex, so they can't race with
     send() or init()
 
